@@ -64,7 +64,17 @@ def train_epoch(model, train_loader, criterion, optimizer, device, metrics, cfg)
         
         # 前向传播
         optimizer.zero_grad()
+        # 在 train_epoch 函数中
         outputs = model(images)
+        if outputs.dim() == 4 and outputs.size(1) == 1:
+            outputs = outputs.squeeze(1)  # (N, 1, H, W) -> (N, H, W)
+        loss = criterion(outputs, masks)  # 现在都是 (N, H, W)
+        
+        # 在 validate 函数中 - 移除错误的双重调整
+        outputs = model(images)
+        if outputs.dim() == 4 and outputs.size(1) == 1:
+            outputs = outputs.squeeze(1)  # 只调整输出
+        # 移除: if masks.dim() == 3: masks = masks.unsqueeze(1)
         loss = criterion(outputs, masks)
         
         # 反向传播
@@ -74,6 +84,7 @@ def train_epoch(model, train_loader, criterion, optimizer, device, metrics, cfg)
         # 计算指标
         with torch.no_grad():
             preds = torch.sigmoid(outputs)
+            # 确保 preds 和 masks 形状一致
             batch_metrics = metrics(preds, masks)
             for name, value in batch_metrics.items():
                 metric_values[name] += value
@@ -109,6 +120,12 @@ def validate(model, val_loader, criterion, device, metrics):
             masks = masks.to(device)
             
             outputs = model(images)
+            # 在计算损失前添加
+            if outputs.dim() == 4 and outputs.size(1) == 1:
+                outputs = outputs.squeeze(1)  # 从 (N, 1, H, W) 变为 (N, H, W)
+            # 或者调整目标张量
+            if masks.dim() == 3:
+                masks = masks.unsqueeze(1)  # 从 (N, H, W) 变为 (N, 1, H, W)
             loss = criterion(outputs, masks)
             
             # 计算指标
