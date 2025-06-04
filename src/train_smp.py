@@ -183,10 +183,15 @@ def save_training_plots(train_losses, val_losses, train_metrics, val_metrics, ou
     plt.close()
 
 def train(cfg):
-    """主训练函数"""
+    """训练函数"""
     # 创建输出目录
     os.makedirs(os.path.dirname(cfg.TRAIN.MODEL_SAVE_PATH), exist_ok=True)
     os.makedirs(cfg.TRAIN.OUTPUT_DIR, exist_ok=True)
+    
+    # 创建检查点保存目录
+    checkpoint_dir = cfg.TRAIN.CHECKPOINT_DIR
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    os.makedirs(os.path.dirname(cfg.TRAIN.MODEL_SAVE_PATH), exist_ok=True)
     
     # 设置设备
     device = torch.device(cfg.DEVICE if torch.cuda.is_available() else "cpu")
@@ -312,34 +317,70 @@ def train(cfg):
         # 保存最佳模型
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            torch.save({
+            best_model_info = {
                 'epoch': epoch + 1,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
                 'val_loss': val_loss,
-                'config': cfg
-            }, cfg.TRAIN.MODEL_SAVE_PATH)
+                'val_metrics': val_metrics_epoch,
+                'train_loss': train_loss,
+                'train_metrics': train_metrics_epoch,
+                'config': cfg,
+                'best_val_loss': best_val_loss
+            }
+            torch.save(best_model_info, cfg.TRAIN.MODEL_SAVE_PATH)
             logger.info(f"保存最佳模型: {cfg.TRAIN.MODEL_SAVE_PATH} (Val Loss: {val_loss:.4f})")
         
-        # 定期保存模型
+        # 定期保存检查点（每隔50轮）
         if (epoch + 1) % cfg.TRAIN.SAVE_INTERVAL == 0:
             checkpoint_path = os.path.join(
-                os.path.dirname(cfg.TRAIN.MODEL_SAVE_PATH),
-                f"checkpoint_epoch_{epoch+1}.pth"
+                checkpoint_dir,
+                f"checkpoint_epoch_{epoch+1:03d}.pth"
             )
-            torch.save({
+            checkpoint_info = {
                 'epoch': epoch + 1,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
                 'val_loss': val_loss,
-                'config': cfg
-            }, checkpoint_path)
+                'val_metrics': val_metrics_epoch,
+                'train_loss': train_loss,
+                'train_metrics': train_metrics_epoch,
+                'config': cfg,
+                'best_val_loss': best_val_loss
+            }
+            torch.save(checkpoint_info, checkpoint_path)
+            logger.info(f"保存检查点: {checkpoint_path} (Epoch: {epoch+1})")
         
         # 早停检查
         if early_stopping(val_loss, model):
             logger.info(f"早停触发，在第 {epoch+1} 轮停止训练")
             break
     
+    # 保存最终模型
+    final_model_path = os.path.join(
+        checkpoint_dir,
+        f"final_model_epoch_{epoch+1:03d}.pth"
+    )
+    final_model_info = {
+        'epoch': epoch + 1,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
+        'val_loss': val_loss,
+        'val_metrics': val_metrics_epoch,
+        'train_loss': train_loss,
+        'train_metrics': train_metrics_epoch,
+        'config': cfg,
+        'best_val_loss': best_val_loss,
+        'is_final': True
+    }
+    torch.save(final_model_info, final_model_path)
+    logger.info(f"保存最终模型: {final_model_path}")
+    
+        
+        
     # 保存训练曲线
     save_training_plots(
         train_losses, val_losses, 

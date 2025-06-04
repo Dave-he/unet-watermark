@@ -1,6 +1,21 @@
 # unet检测水印
 
-#项目结构
+## 0. 项目介绍
+这是一个使用U-Net模型进行水印检测的项目。项目使用了PyTorch和Segmentation Models PyTorch（SMP）库来构建和训练模型。
+## 安装依赖
+```bash
+#venv
+virtualenv env -p 3.10
+source env/bin/activate #linux
+./env/scripts/activate.ps1 #windows 
+
+#conda
+conda create -n env310 python=3.10
+
+pip install -r requirements.txt
+```
+
+# 项目结构
 ```bash
 /Users/hyx/unet-watermark/
 ├── main.py                    # 简洁的入口文件
@@ -38,4 +53,22 @@ pip install kaggle
 #!/bin/bash
 kaggle datasets download -d kamino/largescale-common-watermark-dataset -p data/
 kaggle datasets download -d felicepollano/watermarked-not-watermarked-images -p data/
+
+#复制到train目录下
+find /Users/hyx/unet-watermark/data/WatermarkDataset/images/val/ -type f -exec cp {} /Users/hyx/unet-watermark/data/train/watermarked/ \;
+
+#根据label框生成mask图片(从yolo格式转换为mask图片)
+python src/enhance_masks.py
+```
+
+
+## 2. 训练 && 预测
+```bash
+# 训练时每50轮自动保存检查点
+python main.py train --epochs 300
+
+# 使用不同的检查点进行预测比较
+python main.py predict --input test.jpg --output results1 --model models/checkpoints/checkpoint_epoch_050.pth
+python main.py predict --input test.jpg --output results2 --model models/checkpoints/checkpoint_epoch_100.pth
+python main.py predict --input test.jpg --output results3 --model models/checkpoints/checkpoint_epoch_150.pth
 ```

@@ -23,14 +23,7 @@ class WatermarkPredictor:
     """水印预测器类"""
     
     def __init__(self, model_path, config_path=None, device='cpu'):
-        """
-        初始化预测器
-        
-        Args:
-            model_path (str): 模型权重路径
-            config_path (str): 配置文件路径
-            device (str): 设备类型
-        """
+        """初始化预测器"""
         self.device = torch.device(device)
         
         # 加载配置
@@ -39,12 +32,13 @@ class WatermarkPredictor:
             update_config(self.cfg, config_path)
         
         # 加载模型
-        self.model = self._load_model(model_path)
+        self.model, self.model_info = self._load_model(model_path)
         
         # 数据变换
         self.transform = get_val_transform(self.cfg.DATA.IMG_SIZE)
         
         logger.info(f"预测器初始化完成，使用设备: {self.device}")
+        self._print_model_info()
     
     def _load_model(self, model_path):
         """加载模型"""
@@ -60,14 +54,43 @@ class WatermarkPredictor:
         if 'model_state_dict' in checkpoint:
             model.load_state_dict(checkpoint['model_state_dict'])
             logger.info(f"从检查点加载模型: {model_path}")
-            if 'epoch' in checkpoint:
-                logger.info(f"模型训练轮数: {checkpoint['epoch']}")
+            model_info = {
+                'epoch': checkpoint.get('epoch', 'Unknown'),
+                'val_loss': checkpoint.get('val_loss', 'Unknown'),
+                'val_metrics': checkpoint.get('val_metrics', {}),
+                'train_loss': checkpoint.get('train_loss', 'Unknown'),
+                'train_metrics': checkpoint.get('train_metrics', {}),
+                'best_val_loss': checkpoint.get('best_val_loss', 'Unknown'),
+                'is_final': checkpoint.get('is_final', False)
+            }
         else:
             model.load_state_dict(checkpoint)
             logger.info(f"加载模型权重: {model_path}")
+            model_info = {'epoch': 'Unknown', 'val_loss': 'Unknown'}
         
         model.eval()
-        return model
+        return model, model_info
+    
+    def _print_model_info(self):
+        """打印模型信息"""
+        logger.info("=" * 50)
+        logger.info("模型信息:")
+        logger.info(f"训练轮数: {self.model_info.get('epoch', 'Unknown')}")
+        logger.info(f"验证损失: {self.model_info.get('val_loss', 'Unknown')}")
+        logger.info(f"训练损失: {self.model_info.get('train_loss', 'Unknown')}")
+        
+        val_metrics = self.model_info.get('val_metrics', {})
+        if val_metrics:
+            logger.info(f"验证IoU: {val_metrics.get('iou', 'Unknown')}")
+            logger.info(f"验证F1: {val_metrics.get('f1', 'Unknown')}")
+        
+        if self.model_info.get('is_final', False):
+            logger.info("模型类型: 最终模型")
+        elif self.model_info.get('best_val_loss') == self.model_info.get('val_loss'):
+            logger.info("模型类型: 最佳模型")
+        else:
+            logger.info("模型类型: 检查点模型")
+        logger.info("=" * 50)
     
     def predict_mask(self, image_path):
         """
@@ -285,19 +308,38 @@ class WatermarkPredictor:
 
 def main():
     """主函数"""
-    parser = argparse.ArgumentParser(description='SMP UNet++ 水印检测推理')
-    parser.add_argument('--input', type=str, required=True, help='输入图像或目录')
-    parser.add_argument('--output', type=str, required=True, help='输出目录')
+    parser = argparse.ArgumentParser(description='SMP UNet++ 水印检测预测')
     parser.add_argument('--model', type=str, required=True, help='模型权重路径')
     parser.add_argument('--config', type=str, default='configs/unet_watermark.yaml', help='配置文件路径')
-    parser.add_argument('--device', type=str, default='cpu', help='设备 (cuda/cpu)')
-    parser.add_argument('--save-mask', action='store_true', help='保存预测掩码')
+    parser.add_argument('--input', type=str, required=True, help='输入图像路径或目录')
+    parser.add_argument('--output', type=str, required=True, help='输出目录')
+    parser.add_argument('--device', type=str, default='cpu', help='设备类型')
+    parser.add_argument('--batch-size', type=int, default=8, help='批处理大小')
+    parser.add_argument('--threshold', type=float, default=0.5, help='二值化阈值')
+    parser.add_argument('--save-mask', action='store_true', help='保存掩码')
     parser.add_argument('--remove-watermark', action='store_true', help='去除水印')
-    parser.add_argument('--iopaint-model', type=str, default='lama', 
-                       choices=['lama', 'ldm', 'zits', 'mat'], help='IOPaint模型')
-    parser.add_argument('--threshold', type=float, default=None, help='二值化阈值')
+    parser.add_argument('--iopaint-model', type=str, default='lama', help='IOPaint模型')
+    parser.add_argument('--list-checkpoints', type=str, help='列出指定目录的检查点')
     
     args = parser.parse_args()
+    
+    # 列出检查点
+    if args.list_checkpoints:
+        from utils.model_manager import list_checkpoints
+        list_checkpoints(args.list_checkpoints)
+        return
+    
+    # 验证模型文件
+    if not os.path.exists(args.model):
+        logger.error(f"模型文件不存在: {args.model}")
+        return
+    
+    # 创建预测器
+    predictor = WatermarkPredictor(
+        model_path=args.model,
+        config_path=args.config,
+        device=args.device
+    )
     
     # 检查iopaint是否安装（如果需要去除水印）
     if args.remove_watermark:

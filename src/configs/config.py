@@ -21,7 +21,7 @@ _C.MODEL.ACTIVATION = None  # 激活函数，None表示不使用
 
 # 数据配置
 _C.DATA = CN()
-_C.DATA.ROOT_DIR = "./data/train"  # 数据集根目录
+_C.DATA.ROOT_DIR = "data/train"  # 数据集根目录
 _C.DATA.ADDITIONAL_ROOT_DIRS = [] # 额外的数据集根目录列表
 _C.DATA.IMG_SIZE = 512  # 图像大小
 _C.DATA.GENERATE_MASK_THRESHOLD = 30  # 生成掩码的阈值
@@ -37,11 +37,13 @@ _C.TRAIN.BATCH_SIZE = 16  # 批次大小
 _C.TRAIN.EPOCHS = 300  # 训练轮数
 _C.TRAIN.LR = 0.0001  # 学习率
 _C.TRAIN.WEIGHT_DECAY = 0.0001  # 权重衰减
-_C.TRAIN.OUTPUT_DIR = "./../logs/output"  # 输出目录
-_C.TRAIN.MODEL_SAVE_PATH = "./../models/unet_watermark.pth"  # 模型保存路径
+_C.TRAIN.OUTPUT_DIR = "logs/output"  # 输出目录
+_C.TRAIN.MODEL_SAVE_PATH = "models/unet_watermark.pth"  # 模型保存路径
 _C.TRAIN.LOG_INTERVAL = 10  # 日志打印间隔
-_C.TRAIN.SAVE_INTERVAL = 5  # 模型保存间隔
+_C.TRAIN.SAVE_INTERVAL = 50  # 模型保存间隔（修改为50）
 _C.TRAIN.EARLY_STOPPING_PATIENCE = 10  # 早停耐心值
+_C.TRAIN.CHECKPOINT_DIR = "models/checkpoints"  # 检查点保存目录
+_C.TRAIN.SAVE_BEST_ONLY = False  # 是否只保存最佳模型
 
 # 损失函数配置
 _C.LOSS = CN()
@@ -60,8 +62,8 @@ _C.OPTIMIZER.SCHEDULER_FACTOR = 0.5  # 学习率衰减因子
 
 # 预测配置
 _C.PREDICT = CN()
-_C.PREDICT.INPUT_PATH = "./../data/input"  # 输入图像目录
-_C.PREDICT.OUTPUT_DIR = "./../data/output"  # 输出掩码目录
+_C.PREDICT.INPUT_PATH = "data/input"  # 输入图像目录
+_C.PREDICT.OUTPUT_DIR = "data/output"  # 输出掩码目录
 _C.PREDICT.BATCH_SIZE = 8  # 批处理大小
 _C.PREDICT.THRESHOLD = 0.5  # 二值化阈值
 _C.PREDICT.POST_PROCESS = True  # 是否应用后处理
