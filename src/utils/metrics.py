@@ -17,12 +17,13 @@ def get_metrics():
         recall = smp.metrics.recall(tp, fp, fn, tn, reduction="micro")
         precision = smp.metrics.precision(tp, fp, fn, tn, reduction="micro")
         
+        # 确保所有指标都转移到CPU
         return {
-            'iou': iou,
-            'f1': f1,
-            'accuracy': accuracy,
-            'recall': recall,
-            'precision': precision
+            'iou': iou.cpu().item(),
+            'f1': f1.cpu().item(),
+            'accuracy': accuracy.cpu().item(),
+            'recall': recall.cpu().item(),
+            'precision': precision.cpu().item()
         }
     
     return compute_metrics
@@ -32,7 +33,8 @@ def dice_coef(pred, target, smooth=1e-5):
     pred = pred.view(-1)
     target = target.view(-1)
     intersection = (pred * target).sum()
-    return (2. * intersection + smooth) / (pred.sum() + target.sum() + smooth)
+    result = (2. * intersection + smooth) / (pred.sum() + target.sum() + smooth)
+    return result.cpu().item() if hasattr(result, 'cpu') else result
 
 def iou_score(pred, target, smooth=1e-5):
     """计算IoU分数"""
@@ -40,4 +42,5 @@ def iou_score(pred, target, smooth=1e-5):
     target = target.view(-1)
     intersection = (pred * target).sum()
     union = pred.sum() + target.sum() - intersection
-    return (intersection + smooth) / (union + smooth)
+    result = (intersection + smooth) / (union + smooth)
+    return result.cpu().item() if hasattr(result, 'cpu') else result
