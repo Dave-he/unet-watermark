@@ -58,7 +58,9 @@ kaggle datasets download -d felicepollano/watermarked-not-watermarked-images -p 
 find /Users/hyx/unet-watermark/data/WatermarkDataset/images/val/ -type f -exec cp {} /Users/hyx/unet-watermark/data/train/watermarked/ \;
 
 #根据label框生成mask图片(从yolo格式转换为mask图片)
-python src/enhance_masks.py
+python src/scripts/enhance_masks.py
+#修复图片
+python src/scripts/image_fixer.py data/train
 ```
 
 

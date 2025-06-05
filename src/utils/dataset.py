@@ -60,10 +60,12 @@ class WatermarkDataset(Dataset):
         watermarked_path = self.image_files[idx]
         image_name = os.path.basename(watermarked_path)
         
-        # 读取带水印图像
-        watermarked_img = cv2.imread(watermarked_path)
+        # 读取带水印图像 - 添加错误处理
+        watermarked_img = self._safe_imread(watermarked_path)
         if watermarked_img is None:
-            raise ValueError(f"无法读取图像: {watermarked_path}")
+            # 如果图片损坏，尝试使用下一张图片
+            logger.warning(f"跳过损坏的图片: {watermarked_path}")
+            return self.__getitem__((idx + 1) % len(self.image_files))
         
         watermarked_img = cv2.cvtColor(watermarked_img, cv2.COLOR_BGR2RGB)
         
@@ -215,3 +217,32 @@ def create_datasets(cfg):
     print(f"验证集: {len(val_dataset)} 张图像")
     
     return train_dataset, val_dataset
+
+    def _safe_imread(self, image_path, max_retries=3):
+        """安全地读取图片，处理损坏的文件"""
+        for attempt in range(max_retries):
+            try:
+                # 首先用PIL验证图片
+                with Image.open(image_path) as pil_img:
+                    pil_img.verify()
+                
+                # 然后用OpenCV读取
+                img = cv2.imread(image_path)
+                if img is not None:
+                    return img
+                    
+            except Exception as e:
+                logger.warning(f"读取图片失败 (尝试 {attempt + 1}/{max_retries}): {image_path}, 错误: {str(e)}")
+                
+                if attempt < max_retries - 1:
+                    # 尝试用PIL修复并重新保存
+                    try:
+                        with Image.open(image_path) as pil_img:
+                            if pil_img.mode != 'RGB':
+                                pil_img = pil_img.convert('RGB')
+                            pil_img.save(image_path, 'JPEG', quality=95)
+                            logger.info(f"尝试修复图片: {image_path}")
+                    except:
+                        pass
+        
+        return None
