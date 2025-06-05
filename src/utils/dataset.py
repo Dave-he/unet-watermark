@@ -134,22 +134,26 @@ class WatermarkDataset(Dataset):
         finally:
             sys.stderr = old_stderr
     
-    def _safe_imread(self, image_path, max_retries=2):  # 减少重试次数
+    def _safe_imread(self, image_path, max_retries=2):
         """优化的安全图像读取"""
         for attempt in range(max_retries):
             try:
-                # 直接使用OpenCV读取，减少PIL验证步骤
-                with suppress_opencv_warnings():
-                    img = cv2.imread(image_path)
-                    if img is not None and img.size > 0:
+                # 首先检查文件是否存在且大小合理
+                if not os.path.exists(image_path) or os.path.getsize(image_path) < 1024:
+                    return None
+                    
+                # 使用OpenCV读取
+                img = cv2.imread(image_path)
+                if img is not None and img.size > 0:
+                    # 验证图像形状是否合理
+                    if len(img.shape) == 3 and img.shape[2] == 3:
                         return img
-                        
+                            
             except Exception as e:
                 if attempt == max_retries - 1:
                     logger.warning(f"读取图片失败: {image_path}, 错误: {str(e)}")
-                    return None
-                
-            return None
+                    
+        return None
     
     def _get_or_generate_mask(self, image_name, watermarked_img):
         """获取或生成掩码"""
