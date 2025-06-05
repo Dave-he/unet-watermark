@@ -21,4 +21,4 @@ tqdm>=4.62.0
 matplotlib>=3.5.0
 
 # 开发和调试
-logging>=0.4.9.6
+#logging>=0.4.9.6
