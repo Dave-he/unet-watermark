@@ -162,7 +162,7 @@ def main():
     print("从YOLO标注生成增强mask...")
     
     # 训练集
-    watermark_img_dir = "data/train/watermark"
+    watermark_img_dir = "data/train/watermarked"
     train_img_dir = "data/WatermarkDataset/images/train"
     train_label_dir = "data/WatermarkDataset/labels/train"
     train_enhanced_dir = "data/train/masks"

@@ -99,7 +99,7 @@ huggingface-cli upload heyongxian/watermark_images ./data --repo-type=dataset
 
 
 ```
-7z a -v500m data.7z ./data
+7z a -t7z -mx9 -mmt=8 -v900m data.7z ./data
 
 -mx9 最高压缩级别，-mmt=8 使用 8 线程加速
 7z a -t7z -mx9 -mmt=8 final.7z ./

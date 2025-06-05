@@ -52,14 +52,14 @@ class EarlyStopping:
     def save_checkpoint(self, model):
         self.best_weights = model.state_dict().copy()
 
-def train_epoch(model, train_loader, criterion, optimizer, device, metrics, cfg):
+def train_epoch(model, train_loader, criterion, optimizer, device, scheduler=None):
     """优化后的训练函数"""
     model.train()
     total_loss = 0.0
     metric_values = {'iou': 0.0, 'f1': 0.0, 'accuracy': 0.0, 'recall': 0.0, 'precision': 0.0}
     
-    # 混合精度训练
-    scaler = GradScaler() if device.type == 'cuda' else None
+    # 混合精度训练 - 使用新的API
+    scaler = GradScaler('cuda') if device.type == 'cuda' else None
     
     # 减少指标计算频率
     metric_calc_interval = max(1, len(train_loader) // 10)
@@ -72,9 +72,9 @@ def train_epoch(model, train_loader, criterion, optimizer, device, metrics, cfg)
         
         optimizer.zero_grad()
         
-        # 混合精度前向传播
+        # 混合精度前向传播 - 使用新的API
         if scaler:
-            with autocast():
+            with autocast('cuda'):
                 outputs = model(images)
                 if masks.dim() == 3:
                     masks = masks.unsqueeze(1)
