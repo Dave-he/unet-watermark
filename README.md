@@ -65,7 +65,7 @@ python src/scripts/image_fixer.py data/train
 python src/scripts/gen_data.py --target_count=80000
 
 #检查
-python src/scripts/chekc.py # 清理无效文件
+python src/scripts/check.py # 清理无效文件
 python src/scripts/check.py --delete # 清理无效文件
 ```
 
