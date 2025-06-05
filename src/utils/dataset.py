@@ -7,6 +7,11 @@ import albumentations as A
 from albumentations.pytorch import ToTensorV2
 import random
 from PIL import Image
+import logging
+
+# 添加日志配置
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class WatermarkDataset(Dataset):
     """水印数据集类"""
@@ -91,6 +96,35 @@ class WatermarkDataset(Dataset):
         mask = mask.squeeze()
         
         return watermarked_img, mask
+    
+    def _safe_imread(self, image_path, max_retries=3):
+        """安全地读取图片，处理损坏的文件"""
+        for attempt in range(max_retries):
+            try:
+                # 首先用PIL验证图片
+                with Image.open(image_path) as pil_img:
+                    pil_img.verify()
+                
+                # 然后用OpenCV读取
+                img = cv2.imread(image_path)
+                if img is not None:
+                    return img
+                    
+            except Exception as e:
+                logger.warning(f"读取图片失败 (尝试 {attempt + 1}/{max_retries}): {image_path}, 错误: {str(e)}")
+                
+                if attempt < max_retries - 1:
+                    # 尝试用PIL修复并重新保存
+                    try:
+                        with Image.open(image_path) as pil_img:
+                            if pil_img.mode != 'RGB':
+                                pil_img = pil_img.convert('RGB')
+                            pil_img.save(image_path, 'JPEG', quality=95)
+                            logger.info(f"尝试修复图片: {image_path}")
+                    except:
+                        pass
+        
+        return None
     
     def _get_or_generate_mask(self, image_name, watermarked_img):
         """获取或生成掩码"""
@@ -217,32 +251,3 @@ def create_datasets(cfg):
     print(f"验证集: {len(val_dataset)} 张图像")
     
     return train_dataset, val_dataset
-
-    def _safe_imread(self, image_path, max_retries=3):
-        """安全地读取图片，处理损坏的文件"""
-        for attempt in range(max_retries):
-            try:
-                # 首先用PIL验证图片
-                with Image.open(image_path) as pil_img:
-                    pil_img.verify()
-                
-                # 然后用OpenCV读取
-                img = cv2.imread(image_path)
-                if img is not None:
-                    return img
-                    
-            except Exception as e:
-                logger.warning(f"读取图片失败 (尝试 {attempt + 1}/{max_retries}): {image_path}, 错误: {str(e)}")
-                
-                if attempt < max_retries - 1:
-                    # 尝试用PIL修复并重新保存
-                    try:
-                        with Image.open(image_path) as pil_img:
-                            if pil_img.mode != 'RGB':
-                                pil_img = pil_img.convert('RGB')
-                            pil_img.save(image_path, 'JPEG', quality=95)
-                            logger.info(f"尝试修复图片: {image_path}")
-                    except:
-                        pass
-        
-        return None
