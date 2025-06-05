@@ -52,7 +52,7 @@ class EarlyStopping:
     def save_checkpoint(self, model):
         self.best_weights = model.state_dict().copy()
 
-def train_epoch(model, train_loader, criterion, optimizer, device, scheduler=None):
+def train_epoch(model, train_loader, criterion, optimizer, device, metrics, cfg, scheduler=None):
     """优化后的训练函数"""
     model.train()
     total_loss = 0.0
