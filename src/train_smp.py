@@ -14,6 +14,8 @@ from models.smp_models import create_model_from_config
 from utils.dataset import create_datasets
 from utils.losses import get_loss_function
 from utils.metrics import get_metrics, dice_coef
+import torch.cuda.amp as amp
+from torch.cuda.amp import autocast, GradScaler
 
 # 设置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -51,52 +53,60 @@ class EarlyStopping:
         self.best_weights = model.state_dict().copy()
 
 def train_epoch(model, train_loader, criterion, optimizer, device, metrics, cfg):
-    """训练一个epoch"""
+    """优化后的训练函数"""
     model.train()
     total_loss = 0.0
     metric_values = {'iou': 0.0, 'f1': 0.0, 'accuracy': 0.0, 'recall': 0.0, 'precision': 0.0}
     
+    # 混合精度训练
+    scaler = GradScaler() if device.type == 'cuda' else None
+    
+    # 减少指标计算频率
+    metric_calc_interval = max(1, len(train_loader) // 10)
+    
     progress_bar = tqdm(enumerate(train_loader), total=len(train_loader), desc="Training")
     
     for i, (images, masks) in progress_bar:
-        images = images.to(device)
-        masks = masks.to(device)
+        images = images.to(device, non_blocking=True)
+        masks = masks.to(device, non_blocking=True)
         
-        # 前向传播
         optimizer.zero_grad()
-        outputs = model(images)  # 输出形状: (N, 1, H, W)
         
-        # 确保目标张量也是4D
-        if masks.dim() == 3:
-            masks = masks.unsqueeze(1)  # (N, H, W) -> (N, 1, H, W)
-        
-        loss = criterion(outputs, masks)
-        
-        # 反向传播
-        loss.backward()
-        optimizer.step()
-        
-        # 计算指标
-        with torch.no_grad():
-            preds = torch.sigmoid(outputs)
-            # 为了计算指标，将预测和目标都压缩为3D
-            preds_3d = preds.squeeze(1) if preds.dim() == 4 else preds
-            masks_3d = masks.squeeze(1) if masks.dim() == 4 else masks
-            batch_metrics = metrics(preds_3d, masks_3d)
-            for name, value in batch_metrics.items():
-                metric_values[name] += value
+        # 混合精度前向传播
+        if scaler:
+            with autocast():
+                outputs = model(images)
+                if masks.dim() == 3:
+                    masks = masks.unsqueeze(1)
+                loss = criterion(outputs, masks)
+            
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            outputs = model(images)
+            if masks.dim() == 3:
+                masks = masks.unsqueeze(1)
+            loss = criterion(outputs, masks)
+            loss.backward()
+            optimizer.step()
         
         total_loss += loss.item()
+        
+        # 只在特定间隔计算指标
+        if i % metric_calc_interval == 0:
+            with torch.no_grad():
+                preds = torch.sigmoid(outputs)
+                preds_3d = preds.squeeze(1) if preds.dim() == 4 else preds
+                masks_3d = masks.squeeze(1) if masks.dim() == 4 else masks
+                batch_metrics = metrics(preds_3d, masks_3d)
+                for name, value in batch_metrics.items():
+                    metric_values[name] += value
         
         # 更新进度条
         if (i + 1) % cfg.TRAIN.LOG_INTERVAL == 0:
             avg_loss = total_loss / (i + 1)
-            avg_metrics = {name: val / (i + 1) for name, val in metric_values.items()}
-            progress_bar.set_postfix({
-                'loss': f'{avg_loss:.4f}',
-                'iou': f'{avg_metrics["iou"]:.4f}',
-                'f1': f'{avg_metrics["f1"]:.4f}'
-            })
+            progress_bar.set_postfix({'loss': f'{avg_loss:.4f}'})
     
     avg_loss = total_loss / len(train_loader)
     avg_metrics = {name: val / len(train_loader) for name, val in metric_values.items()}
@@ -203,20 +213,27 @@ def train(cfg):
     # 创建数据集和数据加载器
     train_dataset, val_dataset = create_datasets(cfg)
     
+    # 优化数据加载器配置
+    num_workers = min(cfg.DATA.NUM_WORKERS, os.cpu_count())
+    
     train_loader = DataLoader(
         train_dataset, 
         batch_size=cfg.TRAIN.BATCH_SIZE, 
         shuffle=True, 
-        num_workers=cfg.DATA.NUM_WORKERS,
-        pin_memory=True if device.type == 'cuda' else False
+        num_workers=num_workers,
+        pin_memory=True if device.type == 'cuda' else False,
+        persistent_workers=True if num_workers > 0 else False,
+        prefetch_factor=2 if num_workers > 0 else 2
     )
     
     val_loader = DataLoader(
         val_dataset, 
-        batch_size=cfg.TRAIN.BATCH_SIZE, 
+        batch_size=cfg.TRAIN.BATCH_SIZE * 2,  # 验证时可以用更大的batch size
         shuffle=False, 
-        num_workers=cfg.DATA.NUM_WORKERS,
-        pin_memory=True if device.type == 'cuda' else False
+        num_workers=num_workers,
+        pin_memory=True if device.type == 'cuda' else False,
+        persistent_workers=True if num_workers > 0 else False,
+        prefetch_factor=2 if num_workers > 0 else False
     )
     
     # 创建损失函数和优化器
@@ -277,6 +294,9 @@ def train(cfg):
     logger.info(f"验证集: {len(val_dataset)} 张图像")
     logger.info(f"训练轮数: {cfg.TRAIN.EPOCHS}")
     
+    # 优化检查点保存策略
+    save_interval = max(5, cfg.TRAIN.EPOCHS // 10)  # 动态调整保存间隔
+    
     for epoch in range(cfg.TRAIN.EPOCHS):
         logger.info(f"\nEpoch [{epoch+1}/{cfg.TRAIN.EPOCHS}]")
         
@@ -313,26 +333,21 @@ def train(cfg):
             f"Val F1: {val_metrics_epoch['f1']:.4f}"
         )
         
-        # 保存最佳模型
+        # 只保存最佳模型和最后几个检查点
         if val_loss < best_val_loss:
             best_val_loss = val_loss
+            # 只保存必要信息
             best_model_info = {
                 'epoch': epoch + 1,
                 'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
                 'val_loss': val_loss,
                 'val_metrics': val_metrics_epoch,
-                'train_loss': train_loss,
-                'train_metrics': train_metrics_epoch,
-                'config': cfg,
-                'best_val_loss': best_val_loss
+                'config': cfg
             }
             torch.save(best_model_info, cfg.TRAIN.MODEL_SAVE_PATH)
-            logger.info(f"保存最佳模型: {cfg.TRAIN.MODEL_SAVE_PATH} (Val Loss: {val_loss:.4f})")
         
-        # 定期保存检查点（每隔50轮）
-        if (epoch + 1) % cfg.TRAIN.SAVE_INTERVAL == 0:
+        # 减少检查点保存频率
+        if (epoch + 1) % save_interval == 0 or epoch >= cfg.TRAIN.EPOCHS - 3:
             checkpoint_path = os.path.join(
                 checkpoint_dir,
                 f"checkpoint_epoch_{epoch+1:03d}.pth"

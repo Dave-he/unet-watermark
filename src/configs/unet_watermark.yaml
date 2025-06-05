@@ -20,19 +20,23 @@ DATA:
   VAL_RATIO: 0.2
   SHUFFLE: True
   SEED: 42
-  NUM_WORKERS: 4
+  NUM_WORKERS: 8  # 增加worker数量
+  CACHE_IMAGES: true  # 启用图像缓存
+  PREFETCH_FACTOR: 4  # 增加预取因子
 
 # 训练配置
 TRAIN:
-  BATCH_SIZE: 16  # 批次大小
-  EPOCHS: 50  # 训练轮数
-  LR: 0.0001  # 初始学习率
-  WEIGHT_DECAY: 0.0001  # 权重衰减
-  OUTPUT_DIR: "logs/output"  # 输出目录
-  MODEL_SAVE_PATH: "models/unet_watermark.pth"  # 模型保存路径
-  LOG_INTERVAL: 10  # 日志打印间隔
-  SAVE_INTERVAL: 5  # 模型保存间隔
-  EARLY_STOPPING_PATIENCE: 10  # 早停耐心值
+  BATCH_SIZE: 32  # 根据GPU内存调整
+  EPOCHS: 50
+  LR: 0.0001
+  WEIGHT_DECAY: 0.0001
+  OUTPUT_DIR: "logs/output"
+  MODEL_SAVE_PATH: "models/unet_watermark.pth"
+  LOG_INTERVAL: 20  # 减少日志频率
+  SAVE_INTERVAL: 10  # 减少保存频率
+  EARLY_STOPPING_PATIENCE: 15
+  USE_AMP: true  # 启用混合精度训练
+  GRADIENT_CLIP: 1.0  # 梯度裁剪
 
 # 损失函数配置
 LOSS:

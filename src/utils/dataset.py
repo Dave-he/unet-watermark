@@ -8,6 +8,10 @@ from albumentations.pytorch import ToTensorV2
 import random
 from PIL import Image
 import logging
+import warnings
+import contextlib
+import sys
+import os
 
 # 添加日志配置
 logging.basicConfig(level=logging.INFO)
@@ -17,7 +21,8 @@ class WatermarkDataset(Dataset):
     """水印数据集类"""
     
     def __init__(self, watermarked_dirs, clean_dirs=None, mask_dirs=None,
-                 transform=None, mode='train', generate_mask_threshold=30):
+                 transform=None, mode='train', generate_mask_threshold=30, 
+                 cache_images=True, prefetch_factor=2):
         """
         初始化数据集
         
@@ -35,35 +40,33 @@ class WatermarkDataset(Dataset):
         self.transform = transform
         self.mode = mode
         self.generate_mask_threshold = generate_mask_threshold
+        self.cache_images = cache_images
+        self.prefetch_factor = prefetch_factor
+        self.image_cache = {} if cache_images else None
         
-        # 收集所有图像文件名
-        all_image_files = set()
-        for w_dir in self.watermarked_dirs:
-            if not os.path.exists(w_dir):
-                raise ValueError(f"带水印图像目录不存在: {w_dir}")
-            all_image_files.update([os.path.join(w_dir, f) for f in os.listdir(w_dir)
-                                     if f.lower().endswith(('.png', '.jpg', '.jpeg'))])
-        self.image_files = sorted(list(all_image_files))
-
-        # 验证目录结构
-        if self.mode == 'train':
-            if not self.clean_dirs and not self.mask_dirs:
-                raise ValueError("训练模式下，必须提供clean_dirs或mask_dirs之一！")
-            for c_dir in self.clean_dirs:
-                if not os.path.exists(c_dir):
-                    raise ValueError(f"干净图像目录不存在: {c_dir}")
-        
-        # 创建掩码目录（如果不存在）
-        for m_dir in self.mask_dirs:
-            if not os.path.exists(m_dir):
-                os.makedirs(m_dir, exist_ok=True)
+        # 预加载小数据集到内存
+        if cache_images and len(self.image_files) < 1000:
+            self._preload_images()
     
-    def __len__(self):
-        return len(self.image_files)
+    def _preload_images(self):
+        """预加载图像到内存缓存"""
+        logger.info("预加载图像到内存...")
+        for idx, image_path in enumerate(tqdm(self.image_files[:100])):
+            try:
+                img = self._safe_imread(image_path)
+                if img is not None:
+                    self.image_cache[idx] = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            except Exception as e:
+                logger.warning(f"预加载失败: {image_path}, {e}")
     
     def __getitem__(self, idx):
-        watermarked_path = self.image_files[idx]
-        image_name = os.path.basename(watermarked_path)
+        # 使用缓存的图像
+        if self.image_cache and idx in self.image_cache:
+            watermarked_img = self.image_cache[idx]
+            image_name = os.path.basename(self.image_files[idx])
+        else:
+            watermarked_path = self.image_files[idx]
+            image_name = os.path.basename(watermarked_path)
         
         # 读取带水印图像 - 添加错误处理
         watermarked_img = self._safe_imread(watermarked_path)
@@ -97,34 +100,33 @@ class WatermarkDataset(Dataset):
         
         return watermarked_img, mask
     
-    def _safe_imread(self, image_path, max_retries=3):
-        """安全地读取图片，处理损坏的文件"""
+    @contextlib.contextmanager
+    def suppress_opencv_warnings():
+        """抑制OpenCV警告"""
+        old_stderr = sys.stderr
+        try:
+            with open(os.devnull, 'w') as devnull:
+                sys.stderr = devnull
+                yield
+        finally:
+            sys.stderr = old_stderr
+    
+    def _safe_imread(self, image_path, max_retries=2):  # 减少重试次数
+        """优化的安全图像读取"""
         for attempt in range(max_retries):
             try:
-                # 首先用PIL验证图片
-                with Image.open(image_path) as pil_img:
-                    pil_img.verify()
-                
-                # 然后用OpenCV读取
-                img = cv2.imread(image_path)
-                if img is not None:
-                    return img
-                    
+                # 直接使用OpenCV读取，减少PIL验证步骤
+                with suppress_opencv_warnings():
+                    img = cv2.imread(image_path)
+                    if img is not None and img.size > 0:
+                        return img
+                        
             except Exception as e:
-                logger.warning(f"读取图片失败 (尝试 {attempt + 1}/{max_retries}): {image_path}, 错误: {str(e)}")
+                if attempt == max_retries - 1:
+                    logger.warning(f"读取图片失败: {image_path}, 错误: {str(e)}")
+                    return None
                 
-                if attempt < max_retries - 1:
-                    # 尝试用PIL修复并重新保存
-                    try:
-                        with Image.open(image_path) as pil_img:
-                            if pil_img.mode != 'RGB':
-                                pil_img = pil_img.convert('RGB')
-                            pil_img.save(image_path, 'JPEG', quality=95)
-                            logger.info(f"尝试修复图片: {image_path}")
-                    except:
-                        pass
-        
-        return None
+            return None
     
     def _get_or_generate_mask(self, image_name, watermarked_img):
         """获取或生成掩码"""
