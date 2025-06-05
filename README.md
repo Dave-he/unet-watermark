@@ -61,6 +61,12 @@ find /Users/hyx/unet-watermark/data/WatermarkDataset/images/val/ -type f -exec c
 python src/scripts/enhance_masks.py
 #修复图片
 python src/scripts/image_fixer.py data/train
+# 扩充
+python src/scripts/gen_data.py --target_count=80000
+
+#检查
+python src/scripts/chekc.py # 清理无效文件
+python src/scripts/check.py --delete # 清理无效文件
 ```
 
 

@@ -27,12 +27,14 @@ class WatermarkDataset(Dataset):
         初始化数据集
         
         Args:
-            watermarked_dir (str): 带水印图像目录
-            clean_dir (str): 干净图像目录
-            mask_dir (str): 掩码目录
+            watermarked_dirs (list): 带水印图像目录列表
+            clean_dirs (list): 干净图像目录列表
+            mask_dirs (list): 掩码目录列表
             transform: 数据增强变换
             mode (str): 模式 ('train', 'val', 'test')
             generate_mask_threshold (int): 生成掩码的阈值
+            cache_images (bool): 是否缓存图像
+            prefetch_factor (int): 预取因子
         """
         self.watermarked_dirs = watermarked_dirs if isinstance(watermarked_dirs, list) else [watermarked_dirs]
         self.clean_dirs = clean_dirs if isinstance(clean_dirs, list) else [clean_dirs] if clean_dirs else []
@@ -44,9 +46,30 @@ class WatermarkDataset(Dataset):
         self.prefetch_factor = prefetch_factor
         self.image_cache = {} if cache_images else None
         
+        # 初始化图像文件列表
+        self.image_files = self._collect_image_files()
+        
         # 预加载小数据集到内存
         if cache_images and len(self.image_files) < 1000:
             self._preload_images()
+    
+    def _collect_image_files(self):
+        """收集所有图像文件路径"""
+        image_files = []
+        image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif'}
+        
+        for watermarked_dir in self.watermarked_dirs:
+            if os.path.exists(watermarked_dir):
+                for filename in os.listdir(watermarked_dir):
+                    if any(filename.lower().endswith(ext) for ext in image_extensions):
+                        image_files.append(os.path.join(watermarked_dir, filename))
+        
+        logger.info(f"找到 {len(image_files)} 个图像文件")
+        return sorted(image_files)
+    
+    def __len__(self):
+        """返回数据集大小"""
+        return len(self.image_files)
     
     def _preload_images(self):
         """预加载图像到内存缓存"""
