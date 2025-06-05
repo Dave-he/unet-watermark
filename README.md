@@ -5,12 +5,12 @@
 ## 安装依赖
 ```bash
 #venv
-virtualenv env -p 3.10
+virtualenv env -p 3.13
 source env/bin/activate #linux
 ./env/scripts/activate.ps1 #windows 
 
 #conda
-conda create -n env310 python=3.10
+conda create -n env313 python=3.13
 
 pip install -r requirements.txt
 ```
@@ -64,11 +64,44 @@ python src/enhance_masks.py
 
 ## 2. 训练 && 预测
 ```bash
-# 训练时每50轮自动保存检查点
-python main.py train --epochs 300
+ 1. 训练模型（使用GPU，300轮，每50轮保存检查点）
+python main.py train \
+    --config src/configs/unet_watermark.yaml \
+    --device cuda \
+    --epochs 300 \
+    --batch-size 16 \
+    --output-dir logs/unet_experiment \
+    --model-save-path models/unet_watermark_best.pth
 
 # 使用不同的检查点进行预测比较
 python main.py predict --input test.jpg --output results1 --model models/checkpoints/checkpoint_epoch_050.pth
 python main.py predict --input test.jpg --output results2 --model models/checkpoints/checkpoint_epoch_100.pth
 python main.py predict --input test.jpg --output results3 --model models/checkpoints/checkpoint_epoch_150.pth
 ```
+
+
+
+
+# 上传数据集
+
+huggingface-cli upload heyongxian/watermark_images ./data --repo-type=dataset
+
+
+```
+7z a -v500m data.7z ./data
+
+-mx9 最高压缩级别，-mmt=8 使用 8 线程加速
+7z a -t7z -mx9 -mmt=8 final.7z ./
+
+aws s3 --no-sign-request \
+  --endpoint http://bs3-sgp.internal \
+  cp mark-pro.zip s3://oversea-game/ai-model/
+
+```
+
+国内加速
+HF_ENDPOINT=https://hf-mirror.com
+
+#下载
+https://ghproxy.net/
+https://github.moeyy.xyz/

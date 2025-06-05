@@ -24,7 +24,7 @@ DATA:
 
 # 训练配置
 TRAIN:
-  BATCH_SIZE: 16  # 批次大小
+  BATCH_SIZE: 4  # 批次大小
   EPOCHS: 50  # 训练轮数
   LR: 0.0001  # 初始学习率
   WEIGHT_DECAY: 0.0001  # 权重衰减
