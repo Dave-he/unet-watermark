@@ -147,14 +147,14 @@ def main():
     
     # 方法1: 处理已存在的mask文件
     print("处理训练集mask...")
-    train_mask_dir = "/Users/hyx/unet-watermark/data/train/masks"
-    train_enhanced_dir = "/Users/hyx/unet-watermark/data/train/masks"
+    train_mask_dir = "data/train/masks"
+    train_enhanced_dir = "data/train/masks"
     if os.path.exists(train_mask_dir):
         process_existing_masks(train_mask_dir, train_enhanced_dir, expand_pixels, blur_kernel)
     
     print("处理验证集mask...")
-    val_mask_dir = "/Users/hyx/unet-watermark/data/val/masks"
-    val_enhanced_dir = "/Users/hyx/unet-watermark/data/val/masks"
+    val_mask_dir = "data/val/masks"
+    val_enhanced_dir = "data/val/masks"
     if os.path.exists(val_mask_dir):
         process_existing_masks(val_mask_dir, val_enhanced_dir, expand_pixels, blur_kernel)
     
@@ -162,10 +162,10 @@ def main():
     print("从YOLO标注生成增强mask...")
     
     # 训练集
-    watermark_img_dir = "/Users/hyx/unet-watermark/data/train/watermark"
-    train_img_dir = "/Users/hyx/unet-watermark/data/WatermarkDataset/images/train"
-    train_label_dir = "/Users/hyx/unet-watermark/data/WatermarkDataset/labels/train"
-    train_enhanced_dir = "/Users/hyx/unet-watermark/data/train/masks"
+    watermark_img_dir = "data/train/watermark"
+    train_img_dir = "data/WatermarkDataset/images/train"
+    train_label_dir = "data/WatermarkDataset/labels/train"
+    train_enhanced_dir = "data/train/masks"
     os.makedirs(train_enhanced_dir, exist_ok=True)
     os.makedirs(watermark_img_dir, exist_ok=True)
     
@@ -181,9 +181,9 @@ def main():
             copy(Path(train_img_dir) / img_file, Path(watermark_img_dir) / img_file)
     
     # 验证集
-    val_img_dir = "/Users/hyx/unet-watermark/data/WatermarkDataset/images/val"
-    val_label_dir = "/Users/hyx/unet-watermark/data/WatermarkDataset/labels/val"
-    val_enhanced_dir = "/Users/hyx/unet-watermark/data/val/masks_enhanced"
+    val_img_dir = "data/WatermarkDataset/images/val"
+    val_label_dir = "data/WatermarkDataset/labels/val"
+    val_enhanced_dir = "data/train/masks"
     os.makedirs(val_enhanced_dir, exist_ok=True)
     
     if os.path.exists(val_img_dir) and os.path.exists(val_label_dir):

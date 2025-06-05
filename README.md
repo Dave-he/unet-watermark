@@ -67,6 +67,8 @@ python src/scripts/image_fixer.py data/train
 ## 2. 训练 && 预测
 ```bash
  1. 训练模型（使用GPU，300轮，每50轮保存检查点）
+python main.py train --device cuda --epochs 300 --batch-size 16
+
 python main.py train \
     --config src/configs/unet_watermark.yaml \
     --device cuda \
@@ -74,6 +76,7 @@ python main.py train \
     --batch-size 16 \
     --output-dir logs/unet_experiment \
     --model-save-path models/unet_watermark_best.pth
+
 
 # 使用不同的检查点进行预测比较
 python main.py predict --input test.jpg --output results1 --model models/checkpoints/checkpoint_epoch_050.pth

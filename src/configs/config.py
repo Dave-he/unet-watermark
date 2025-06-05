@@ -30,6 +30,8 @@ _C.DATA.VAL_RATIO = 0.2  # 验证集比例
 _C.DATA.SHUFFLE = True  # 是否打乱数据集
 _C.DATA.SEED = 42  # 随机种子
 _C.DATA.NUM_WORKERS = 4  # 数据加载器工作进程数
+_C.DATA.CACHE_IMAGES = False  # 启用图像缓存
+_C.DATA.PREFETCH_FACTOR = 2  # 预取因子
 
 # 训练配置
 _C.TRAIN = CN()
@@ -44,6 +46,8 @@ _C.TRAIN.SAVE_INTERVAL = 50  # 模型保存间隔（修改为50）
 _C.TRAIN.EARLY_STOPPING_PATIENCE = 10  # 早停耐心值
 _C.TRAIN.CHECKPOINT_DIR = "models/checkpoints"  # 检查点保存目录
 _C.TRAIN.SAVE_BEST_ONLY = False  # 是否只保存最佳模型
+_C.TRAIN.USE_AMP = False  # 启用混合精度训练
+_C.TRAIN.GRADIENT_CLIP = 1.0  # 梯度裁剪
 
 # 损失函数配置
 _C.LOSS = CN()
