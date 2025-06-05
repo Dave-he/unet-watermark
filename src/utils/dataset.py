@@ -8,9 +8,6 @@ from albumentations.pytorch import ToTensorV2
 import random
 from PIL import Image
 import logging
-import warnings
-import contextlib
-from io import StringIO
 
 # 添加日志配置
 logging.basicConfig(level=logging.INFO)
@@ -100,50 +97,30 @@ class WatermarkDataset(Dataset):
         
         return watermarked_img, mask
     
-    @contextlib.contextmanager
-    def suppress_opencv_warnings():
-        """抑制 OpenCV 的 stderr 警告输出"""
-        # 保存原始的 stderr
-        original_stderr = sys.stderr
-        try:
-            # 重定向 stderr 到一个字符串缓冲区
-            sys.stderr = StringIO()
-            yield
-        finally:
-            # 恢复原始的 stderr
-            sys.stderr = original_stderr
-    
     def _safe_imread(self, image_path, max_retries=3):
         """安全地读取图片，处理损坏的文件"""
         for attempt in range(max_retries):
             try:
-                # 抑制 PIL 的警告
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    # 首先用PIL验证图片
-                    with Image.open(image_path) as pil_img:
-                        pil_img.verify()
+                # 首先用PIL验证图片
+                with Image.open(image_path) as pil_img:
+                    pil_img.verify()
                 
-                # 抑制 OpenCV 的警告输出
-                with suppress_opencv_warnings():
-                    # 然后用OpenCV读取
-                    img = cv2.imread(image_path)
-                    if img is not None:
-                        return img
-                        
+                # 然后用OpenCV读取
+                img = cv2.imread(image_path)
+                if img is not None:
+                    return img
+                    
             except Exception as e:
                 logger.warning(f"读取图片失败 (尝试 {attempt + 1}/{max_retries}): {image_path}, 错误: {str(e)}")
                 
                 if attempt < max_retries - 1:
                     # 尝试用PIL修复并重新保存
                     try:
-                        with warnings.catch_warnings():
-                            warnings.simplefilter("ignore")
-                            with Image.open(image_path) as pil_img:
-                                if pil_img.mode != 'RGB':
-                                    pil_img = pil_img.convert('RGB')
-                                pil_img.save(image_path, 'JPEG', quality=95)
-                                logger.info(f"尝试修复图片: {image_path}")
+                        with Image.open(image_path) as pil_img:
+                            if pil_img.mode != 'RGB':
+                                pil_img = pil_img.convert('RGB')
+                            pil_img.save(image_path, 'JPEG', quality=95)
+                            logger.info(f"尝试修复图片: {image_path}")
                     except:
                         pass
         
