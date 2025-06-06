@@ -56,7 +56,10 @@ _C.LOSS.NAME = "DiceLoss"  # 损失函数名称
 _C.LOSS.MODE = "binary"  # 损失函数模式
 _C.LOSS.SMOOTH = 1e-5  # 损失函数平滑项
 _C.LOSS.BCE_WEIGHT = 0.5  # BCE损失权重
+_C.LOSS.DICE_WEIGHT = 0.5  # Dice损失权重（新增）
 _C.LOSS.DICE_SMOOTH = 1e-5  # Dice损失平滑项（向后兼容）
+_C.LOSS.FOCAL_ALPHA = 0.25  # Focal Loss alpha参数（可选）
+_C.LOSS.FOCAL_GAMMA = 2.0   # Focal Loss gamma参数（可选）
 
 # 优化器配置
 _C.OPTIMIZER = CN()

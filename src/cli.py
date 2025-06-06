@@ -215,6 +215,12 @@ def main():
     train_parser.add_argument('--epochs', type=int, help='训练轮数')
     train_parser.add_argument('--lr', type=float, help='学习率')
     
+    # 添加早停控制参数
+    train_parser.add_argument('--no-early-stopping', action='store_true',
+                             help='禁用早停机制')
+    train_parser.add_argument('--early-stopping-patience', type=int,
+                             help='早停耐心值（等待验证损失改善的轮数）')
+    
     # 预测命令
     predict_parser = subparsers.add_parser('predict', help='预测/推理')
     predict_parser.add_argument('--input', type=str, required=True, 

@@ -39,15 +39,16 @@ TRAIN:
   USE_AMP: true
   GRADIENT_CLIP: 1.0
 
-# 损失函数配置 - 使用组合损失
+# 损失函数配置
 LOSS:
-  NAME: "CombinedLoss"  # 使用BCE+Dice组合损失
+  NAME: "DiceLoss"  # 或 "CombinedLoss" 用于组合损失
   MODE: "binary"
   SMOOTH: 1e-5
-  BCE_WEIGHT: 0.4      # BCE权重
-  DICE_WEIGHT: 0.6     # Dice权重
-  FOCAL_ALPHA: 0.25    # Focal Loss参数
-  FOCAL_GAMMA: 2.0
+  BCE_WEIGHT: 0.4      # BCE损失权重
+  DICE_WEIGHT: 0.6     # Dice损失权重（新增）
+  DICE_SMOOTH: 1e-5    # Dice损失平滑项
+  FOCAL_ALPHA: 0.25    # Focal Loss参数（可选）
+  FOCAL_GAMMA: 2.0     # Focal Loss参数（可选）
 
 # 优化器配置
 OPTIMIZER:
