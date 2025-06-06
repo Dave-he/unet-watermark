@@ -206,7 +206,7 @@ def main():
     train_parser = subparsers.add_parser('train', help='训练模型')
     train_parser.add_argument('--config', type=str, help='配置文件路径',
                              default="src/configs/unet_watermark.yaml")
-    train_parser.add_argument('--device', type=str, choices=['cpu', 'cuda', 'auto'], 
+    train_parser.add_argument('--device', type=str, 
                              default='auto', help='计算设备 (默认: auto)')
     train_parser.add_argument('--data-dir', type=str, help='数据集根目录')
     train_parser.add_argument('--output-dir', type=str, help='输出目录')
@@ -224,7 +224,7 @@ def main():
     predict_parser.add_argument('--model', type=str, required=True, 
                                help='模型文件路径')
     predict_parser.add_argument('--config', type=str, help='配置文件路径')
-    predict_parser.add_argument('--device', type=str, choices=['cpu', 'cuda', 'auto'], 
+    predict_parser.add_argument('--device', type=str, 
                                default='auto', help='计算设备 (默认: auto)')
     predict_parser.add_argument('--batch-size', type=int, default=8, 
                                help='批次大小 (默认: 8)')
