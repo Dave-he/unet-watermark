@@ -207,16 +207,79 @@ class WatermarkDataset(Dataset):
         
         return mask
 
-def get_train_transform(img_size=512):
-    """获取训练时的数据增强变换"""
+def get_transparent_watermark_transform(img_size=512):
+    """专门针对透明水印的数据增强变换"""
     return A.Compose([
         A.Resize(height=img_size, width=img_size),
         A.HorizontalFlip(p=0.5),
         A.VerticalFlip(p=0.2),
         A.RandomRotate90(p=0.3),
         A.ShiftScaleRotate(shift_limit=0.1, scale_limit=0.1, rotate_limit=15, p=0.3),
-        A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.3),
-        A.HueSaturationValue(hue_shift_limit=10, sat_shift_limit=20, val_shift_limit=10, p=0.3),
+        
+        # 针对透明水印的特殊增强
+        A.RandomBrightnessContrast(
+            brightness_limit=0.3,  # 增大亮度变化
+            contrast_limit=0.3,    # 增大对比度变化
+            p=0.7  # 提高应用概率
+        ),
+        A.HueSaturationValue(
+            hue_shift_limit=15, 
+            sat_shift_limit=30,    # 增大饱和度变化
+            val_shift_limit=20,    # 增大明度变化
+            p=0.5
+        ),
+        
+        # 添加噪声，模拟真实环境
+        A.GaussNoise(var_limit=(10.0, 50.0), p=0.3),
+        
+        # 模糊效果，模拟图像质量问题
+        A.OneOf([
+            A.MotionBlur(blur_limit=3, p=0.5),
+            A.GaussianBlur(blur_limit=3, p=0.5),
+        ], p=0.2),
+        
+        # JPEG压缩，模拟实际使用场景
+        A.ImageCompression(quality_lower=60, quality_upper=100, p=0.3),
+        
+        A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ToTensorV2(),
+    ])
+
+def get_enhanced_train_transform(img_size=512):
+    """增强版训练数据变换，包含透明水印优化"""
+    return A.Compose([
+        A.Resize(height=img_size, width=img_size),
+        A.HorizontalFlip(p=0.5),
+        A.VerticalFlip(p=0.2),
+        A.RandomRotate90(p=0.3),
+        A.ShiftScaleRotate(shift_limit=0.1, scale_limit=0.1, rotate_limit=15, p=0.3),
+        
+        # 增强的亮度对比度调整
+        A.RandomBrightnessContrast(
+            brightness_limit=0.25, 
+            contrast_limit=0.25, 
+            p=0.6
+        ),
+        A.HueSaturationValue(
+            hue_shift_limit=12, 
+            sat_shift_limit=25, 
+            val_shift_limit=15, 
+            p=0.4
+        ),
+        
+        # 添加更多增强技术
+        A.OneOf([
+            A.CLAHE(clip_limit=2.0, tile_grid_size=(8, 8), p=0.5),
+            A.RandomGamma(gamma_limit=(80, 120), p=0.5),
+        ], p=0.3),
+        
+        # 噪声和模糊
+        A.GaussNoise(var_limit=(5.0, 30.0), p=0.2),
+        A.OneOf([
+            A.MotionBlur(blur_limit=3, p=0.5),
+            A.GaussianBlur(blur_limit=3, p=0.5),
+        ], p=0.15),
+        
         A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ToTensorV2(),
     ])

@@ -90,7 +90,12 @@ python main.py predict --input test.jpg --output results2 --model models/checkpo
 python main.py predict --input test.jpg --output results3 --model models/checkpoints/checkpoint_epoch_150.pth
 ```
 
-
+``` bash
+# 图片修复
+iopaint run --model=lama \                                 
+  --device=cpu --image=data/input1 --mask=data/result1 \ 
+  --output=data/out1 --model-dir=~/.cache
+```
 
 
 # 上传数据集

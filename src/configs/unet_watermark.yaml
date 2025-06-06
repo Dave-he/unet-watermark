@@ -15,36 +15,39 @@ DATA:
   ROOT_DIR: "./data/train"
   ADDITIONAL_ROOT_DIRS: []
   IMG_SIZE: 512
-  GENERATE_MASK_THRESHOLD: 30
+  GENERATE_MASK_THRESHOLD: 20  # 降低阈值，提高透明水印检测敏感度
   TRAIN_RATIO: 0.8
   VAL_RATIO: 0.2
   SHUFFLE: True
   SEED: 42
-  NUM_WORKERS: 8  # 增加worker数量
-  CACHE_IMAGES: true  # 启用图像缓存
-  PREFETCH_FACTOR: 4  # 增加预取因子
+  NUM_WORKERS: 8
+  CACHE_IMAGES: true
+  PREFETCH_FACTOR: 4
 
 # 训练配置
 TRAIN:
-  BATCH_SIZE: 32  # 根据GPU内存调整
-  EPOCHS: 50
+  BATCH_SIZE: 24  # 适当减小批次大小，提高训练稳定性
+  EPOCHS: 100     # 增加训练轮数
   LR: 0.0001
   WEIGHT_DECAY: 0.0001
   OUTPUT_DIR: "logs/output"
   MODEL_SAVE_PATH: "models/unet_watermark.pth"
-  LOG_INTERVAL: 20  # 减少日志频率
-  SAVE_INTERVAL: 10  # 减少保存频率
-  EARLY_STOPPING_PATIENCE: 15
-  USE_AMP: true  # 启用混合精度训练
-  GRADIENT_CLIP: 1.0  # 梯度裁剪
+  LOG_INTERVAL: 20
+  SAVE_INTERVAL: 10
+  USE_EARLY_STOPPING: False  # 禁用早停
+  EARLY_STOPPING_PATIENCE: 20  # 如果启用早停，增加耐心值
+  USE_AMP: true
+  GRADIENT_CLIP: 1.0
 
-# 损失函数配置
+# 损失函数配置 - 使用组合损失
 LOSS:
-  NAME: "DiceLoss"  # 损失函数名称: DiceLoss, JaccardLoss, etc.
-  MODE: "binary"  # 损失函数模式
-  SMOOTH: 1e-5  # 损失函数平滑项
-  BCE_WEIGHT: 0.5  # BCE损失权重（如果使用组合损失）
-  DICE_SMOOTH: 1e-5  # Dice损失平滑项（向后兼容）
+  NAME: "CombinedLoss"  # 使用BCE+Dice组合损失
+  MODE: "binary"
+  SMOOTH: 1e-5
+  BCE_WEIGHT: 0.4      # BCE权重
+  DICE_WEIGHT: 0.6     # Dice权重
+  FOCAL_ALPHA: 0.25    # Focal Loss参数
+  FOCAL_GAMMA: 2.0
 
 # 优化器配置
 OPTIMIZER:

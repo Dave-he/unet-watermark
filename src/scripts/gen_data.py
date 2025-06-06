@@ -51,20 +51,29 @@ def resize_watermark(watermark, target_size, min_scale=0.05, max_scale=0.3):
     
     return watermark.resize((new_width, new_height), Image.Resampling.LANCZOS)
 
-def apply_watermark_effects(watermark):
-    """对水印应用随机效果"""
-    # 随机透明度
-    alpha = random.uniform(0.3, 0.9)
+def apply_watermark_effects(watermark, enhance_transparent=True):
+    """对水印应用随机效果，特别针对透明水印优化"""
+    if enhance_transparent:
+        # 为透明水印使用更低的透明度范围，增加难度
+        alpha = random.uniform(0.1, 0.7)  # 降低最小透明度
+    else:
+        # 普通水印透明度
+        alpha = random.uniform(0.3, 0.9)
     
-    # 随机亮度调整
-    brightness = random.uniform(0.7, 1.3)
+    # 更激进的亮度调整，模拟不同光照条件
+    brightness = random.uniform(0.5, 1.5)  # 扩大范围
     enhancer = ImageEnhance.Brightness(watermark)
     watermark = enhancer.enhance(brightness)
     
-    # 随机对比度调整
-    contrast = random.uniform(0.8, 1.2)
+    # 更大范围的对比度调整
+    contrast = random.uniform(0.6, 1.4)  # 扩大范围
     enhancer = ImageEnhance.Contrast(watermark)
     watermark = enhancer.enhance(contrast)
+    
+    # 添加色彩饱和度调整
+    saturation = random.uniform(0.7, 1.3)
+    enhancer = ImageEnhance.Color(watermark)
+    watermark = enhancer.enhance(saturation)
     
     # 应用透明度
     if watermark.mode != 'RGBA':
@@ -134,6 +143,7 @@ def main():
     parser.add_argument('--logos_dir', default='data/WatermarkDataset/logos', help='水印图片目录')
     parser.add_argument('--output_dir', default='data/train', help='输出目录')
     parser.add_argument('--target_count', type=int, default=10000, help='目标图片数量')
+    parser.add_argument('--transparent_ratio', type=float, default=0.6, help='透明水印样本比例')
     parser.add_argument('--seed', type=int, default=42, help='随机种子')
     
     args = parser.parse_args()
@@ -173,35 +183,48 @@ def main():
     
     # 生成图片
     generated_count = 0
+    transparent_count = 0
+    target_transparent = int(remaining_count * args.transparent_ratio)
+    
     pbar = tqdm(total=remaining_count, desc="生成带水印图片")
     
     while generated_count < remaining_count:
+        # 决定是否生成透明水印
+        should_generate_transparent = (transparent_count < target_transparent) or \
+                                    (random.random() < args.transparent_ratio)
+        
         # 随机选择干净图片和水印
         clean_path = random.choice(clean_images)
         watermark_path = random.choice(watermarks)
         
         try:
             # 生成带水印图片和mask
-            watermarked_img, mask = generate_watermarked_image(clean_path, watermark_path)
+            watermarked_img, mask = generate_watermarked_image(
+                clean_path, watermark_path, 
+                enhance_transparent=should_generate_transparent
+            )
             
             # 生成文件名
-            filename = generate_filename(clean_path, watermark_path, generated_count)
+            prefix = "trans_" if should_generate_transparent else "norm_"
+            filename = prefix + generate_filename(clean_path, watermark_path, generated_count)
             
             # 保存图片
             watermarked_img.save(os.path.join(watermarked_dir, f"{filename}.jpg"), quality=95)
             mask.save(os.path.join(masks_dir, f"{filename}.png"))
+            
+            if should_generate_transparent:
+                transparent_count += 1
             
             generated_count += 1
             pbar.update(1)
             
         except Exception as e:
             print(f"\n生成图片时出错: {e}")
-            print(f"干净图片: {clean_path}")
-            print(f"水印图片: {watermark_path}")
             continue
     
     pbar.close()
-    print(f"\n成功生成 {generated_count} 张带水印图片和对应的mask")
+    print(f"\n成功生成 {generated_count} 张带水印图片")
+    print(f"其中透明水印: {transparent_count} 张 ({transparent_count/generated_count*100:.1f}%)")
     print(f"带水印图片保存在: {watermarked_dir}")
     print(f"Mask图片保存在: {masks_dir}")
 
