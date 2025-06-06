@@ -43,6 +43,7 @@ _C.TRAIN.OUTPUT_DIR = "logs/output"  # 输出目录
 _C.TRAIN.MODEL_SAVE_PATH = "models/unet_watermark.pth"  # 模型保存路径
 _C.TRAIN.LOG_INTERVAL = 10  # 日志打印间隔
 _C.TRAIN.SAVE_INTERVAL = 50  # 模型保存间隔（修改为50）
+_C.TRAIN.USE_EARLY_STOPPING = True  # 是否启用早停机制
 _C.TRAIN.EARLY_STOPPING_PATIENCE = 10  # 早停耐心值
 _C.TRAIN.CHECKPOINT_DIR = "models/checkpoints"  # 检查点保存目录
 _C.TRAIN.SAVE_BEST_ONLY = False  # 是否只保存最佳模型

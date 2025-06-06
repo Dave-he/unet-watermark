@@ -73,7 +73,7 @@ python src/scripts/check.py --delete # 清理无效文件
 ## 2. 训练 && 预测
 ```bash
  1. 训练模型（使用GPU，300轮，每50轮保存检查点）
-python main.py train --device cuda --epochs 300 --batch-size 16
+python main.py train --device cuda --epochs 300 --batch-size 16 --no-early-stopping
 
 python main.py train \
     --config src/configs/unet_watermark.yaml \

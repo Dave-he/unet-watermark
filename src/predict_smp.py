@@ -228,7 +228,7 @@ class WatermarkPredictor:
             
             # 保存掩码
             if save_mask:
-                mask_path = os.path.join(output_dir, f"{base_name}_mask.png")
+                mask_path = os.path.join(output_dir, f"{base_name}.png")
                 cv2.imwrite(mask_path, mask)
                 result['mask'] = mask_path
                 logger.info(f"掩码已保存: {mask_path}")

@@ -113,12 +113,7 @@ def train_command(args):
 
 
 def predict_command(args):
-    """
-    执行预测命令
-    
-    Args:
-        args: 命令行参数
-    """
+    """执行预测命令"""
     print("=" * 60)
     print("开始水印分割预测")
     print("=" * 60)
@@ -157,11 +152,6 @@ def predict_command(args):
         if args.config:
             update_config(cfg, args.config)
         
-        # 解冻配置以允许修改（如果需要）
-        # cfg.defrost()
-        # 进行任何必要的配置修改
-        # cfg.freeze()
-        
         # 创建预测器
         predictor = WatermarkPredictor(
             model_path=args.model,
@@ -169,14 +159,17 @@ def predict_command(args):
             device=str(device)
         )
         
+        # 覆盖阈值配置
+        if args.threshold is not None:
+            predictor.cfg.PREDICT.THRESHOLD = args.threshold
+        
         # 执行预测
-        results = predictor.predict_batch(
+        results = predictor.process_batch(
             input_path=args.input,
             output_dir=args.output,
-            batch_size=args.batch_size or 8,
-            threshold=args.threshold or 0.5,
-            save_masks=args.save_masks,
-            save_overlay=args.save_overlay
+            save_mask=args.save_mask or False,  # 修改为正确的参数名
+            remove_watermark=args.save_overlay or False,
+            iopaint_model='lama'
         )
         
         print("\n预测完成！")
@@ -190,9 +183,7 @@ def predict_command(args):
 
 
 def main():
-    """
-    主函数 - 解析命令行参数并执行相应操作
-    """
+    """主函数 - 解析命令行参数并执行相应操作"""
     parser = argparse.ArgumentParser(
         description="水印分割系统 - 基于SMP库的UNet++模型",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -204,7 +195,7 @@ def main():
     
   预测模式:
     python main.py predict --input data/test --output results --model models/best_model.pth
-    python main.py predict --input single_image.jpg --output results --model models/best_model.pth --save-masks
+    python main.py predict --input single_image.jpg --output results --model models/best_model.pth --save-mask
         """
     )
     
@@ -239,7 +230,7 @@ def main():
                                help='批次大小 (默认: 8)')
     predict_parser.add_argument('--threshold', type=float, default=0.5, 
                                help='二值化阈值 (默认: 0.5)')
-    predict_parser.add_argument('--save-masks', action='store_true', 
+    predict_parser.add_argument('--save-mask', action='store_true',  # 修改为单数
                                help='保存预测掩码')
     predict_parser.add_argument('--save-overlay', action='store_true', 
                                help='保存叠加可视化图像')

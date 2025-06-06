@@ -275,11 +275,16 @@ def train(cfg):
     # 评估指标
     metrics = get_metrics()
     
-    # 早停机制
-    early_stopping = EarlyStopping(
-        patience=cfg.TRAIN.EARLY_STOPPING_PATIENCE,
-        restore_best_weights=True
-    )
+    # 早停机制 - 根据配置决定是否启用
+    early_stopping = None
+    if cfg.TRAIN.USE_EARLY_STOPPING:
+        early_stopping = EarlyStopping(
+            patience=cfg.TRAIN.EARLY_STOPPING_PATIENCE,
+            restore_best_weights=True
+        )
+        logger.info(f"启用早停机制，耐心值: {cfg.TRAIN.EARLY_STOPPING_PATIENCE}")
+    else:
+        logger.info("禁用早停机制，将训练完整的epoch数")
     
     # 训练历史记录
     train_losses = []
@@ -367,8 +372,8 @@ def train(cfg):
             torch.save(checkpoint_info, checkpoint_path)
             logger.info(f"保存检查点: {checkpoint_path} (Epoch: {epoch+1})")
         
-        # 早停检查
-        if early_stopping(val_loss, model):
+        # 早停检查 - 只有在启用早停时才进行检查
+        if early_stopping and early_stopping(val_loss, model):
             logger.info(f"早停触发，在第 {epoch+1} 轮停止训练")
             break
     
@@ -439,6 +444,17 @@ def main():
         default=None,
         help='学习率'
     )
+    parser.add_argument(
+        '--no-early-stopping', 
+        action='store_true',
+        help='禁用早停机制'
+    )
+    parser.add_argument(
+        '--early-stopping-patience', 
+        type=int, 
+        default=None,
+        help='早停耐心值'
+    )
     
     args = parser.parse_args()
     
@@ -458,6 +474,10 @@ def main():
         cfg.TRAIN.EPOCHS = args.epochs
     if args.lr:
         cfg.TRAIN.LR = args.lr
+    if args.no_early_stopping:
+        cfg.TRAIN.USE_EARLY_STOPPING = False
+    if args.early_stopping_patience:
+        cfg.TRAIN.EARLY_STOPPING_PATIENCE = args.early_stopping_patience
     
     # 开始训练
     train(cfg)
