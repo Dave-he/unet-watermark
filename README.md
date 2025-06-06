@@ -85,7 +85,7 @@ python main.py train \
 
 
 # 使用不同的检查点进行预测比较
-python main.py predict --input test.jpg --output results1 --model models/checkpoints/checkpoint_epoch_050.pth
+python main.py predict --input data/input1/ --output data/result1 --model models/watermark.pth
 python main.py predict --input test.jpg --output results2 --model models/checkpoints/checkpoint_epoch_100.pth
 python main.py predict --input test.jpg --output results3 --model models/checkpoints/checkpoint_epoch_150.pth
 ```

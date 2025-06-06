@@ -22,14 +22,17 @@ logger = logging.getLogger(__name__)
 class WatermarkPredictor:
     """水印预测器类"""
     
-    def __init__(self, model_path, config_path=None, device='cpu'):
+    def __init__(self, model_path, config_path=None, config=None, device='cpu'):
         """初始化预测器"""
         self.device = torch.device(device)
         
         # 加载配置
-        self.cfg = get_cfg_defaults()
-        if config_path and os.path.exists(config_path):
-            update_config(self.cfg, config_path)
+        if config is not None:
+            self.cfg = config
+        else:
+            self.cfg = get_cfg_defaults()
+            if config_path and os.path.exists(config_path):
+                update_config(self.cfg, config_path)
         
         # 加载模型
         self.model, self.model_info = self._load_model(model_path)
@@ -48,8 +51,8 @@ class WatermarkPredictor:
         # 创建模型
         model = create_model_from_config(self.cfg).to(self.device)
         
-        # 加载权重
-        checkpoint = torch.load(model_path, map_location=self.device)
+        # 加载权重 - 添加 weights_only=False 以兼容包含配置对象的模型文件
+        checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
         
         if 'model_state_dict' in checkpoint:
             model.load_state_dict(checkpoint['model_state_dict'])
@@ -310,7 +313,7 @@ def main():
     """主函数"""
     parser = argparse.ArgumentParser(description='SMP UNet++ 水印检测预测')
     parser.add_argument('--model', type=str, required=True, help='模型权重路径')
-    parser.add_argument('--config', type=str, default='configs/unet_watermark.yaml', help='配置文件路径')
+    parser.add_argument('--config', type=str, default='src/configs/unet_watermark.yaml', help='配置文件路径')
     parser.add_argument('--input', type=str, required=True, help='输入图像路径或目录')
     parser.add_argument('--output', type=str, required=True, help='输出目录')
     parser.add_argument('--device', type=str, default='cpu', help='设备类型')

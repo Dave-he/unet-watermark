@@ -165,7 +165,7 @@ def predict_command(args):
         # 创建预测器
         predictor = WatermarkPredictor(
             model_path=args.model,
-            config=cfg,
+            config_path=args.config,
             device=str(device)
         )
         
