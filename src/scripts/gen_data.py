@@ -85,7 +85,7 @@ def apply_watermark_effects(watermark, enhance_transparent=True):
     
     return Image.fromarray(watermark_array)
 
-def generate_watermarked_image(clean_image_path, watermark_path):
+def generate_watermarked_image(clean_image_path, watermark_path, enhance_transparent=True):
     """生成带水印的图片和对应的mask"""
     # 加载图片
     clean_img = Image.open(clean_image_path).convert('RGB')
@@ -94,8 +94,8 @@ def generate_watermarked_image(clean_image_path, watermark_path):
     # 调整水印大小
     watermark_resized = resize_watermark(watermark, clean_img.size)
     
-    # 应用水印效果
-    watermark_resized = apply_watermark_effects(watermark_resized)
+    # 应用水印效果，传递 enhance_transparent 参数
+    watermark_resized = apply_watermark_effects(watermark_resized, enhance_transparent)
     
     # 随机位置放置水印
     max_x = clean_img.width - watermark_resized.width
