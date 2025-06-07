@@ -77,7 +77,7 @@ def train_epoch(model, train_loader, criterion, optimizer, device, metrics, cfg,
         
         # 混合精度前向传播 - 使用新的API
         if scaler:
-            with torch.autocast():
+            with torch.autocast(device_type="cuda"):
                 outputs = model(images)
                 if masks.dim() == 3:
                     masks = masks.unsqueeze(1)
