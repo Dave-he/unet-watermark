@@ -15,7 +15,19 @@ from utils.dataset import create_datasets
 from utils.losses import get_loss_function
 from utils.metrics import get_metrics, dice_coef
 import torch.cuda.amp as amp
+# 修改第18行的导入
+# 第18行 - 保持原有导入或改为新导入
 from torch.cuda.amp import autocast, GradScaler
+
+# 第62行 - 修改 GradScaler 创建
+scaler = GradScaler() if device.type == 'cuda' else None
+
+# 第77行 - 修改 autocast 使用
+if scaler:
+    with autocast(device_type='cuda', enabled=True):
+        outputs = model(images)
+        if masks.dim() == 3:
+            masks = masks.unsqueeze(1)
 
 # 设置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -59,7 +71,7 @@ def train_epoch(model, train_loader, criterion, optimizer, device, metrics, cfg,
     metric_values = {'iou': 0.0, 'f1': 0.0, 'accuracy': 0.0, 'recall': 0.0, 'precision': 0.0}
     
     # 混合精度训练 - 使用新的API
-    scaler = GradScaler('cuda') if device.type == 'cuda' else None
+    scaler = GradScaler(device='cuda') if device.type == 'cuda' else None
     
     # 减少指标计算频率
     metric_calc_interval = max(1, len(train_loader) // 10)
