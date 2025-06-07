@@ -19,16 +19,6 @@ import torch.cuda.amp as amp
 # 第18行 - 保持原有导入或改为新导入
 from torch.cuda.amp import autocast, GradScaler
 
-# 第62行 - 修改 GradScaler 创建
-scaler = GradScaler() if device.type == 'cuda' else None
-
-# 第77行 - 修改 autocast 使用
-if scaler:
-    with autocast(device_type='cuda', enabled=True):
-        outputs = model(images)
-        if masks.dim() == 3:
-            masks = masks.unsqueeze(1)
-
 # 设置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
