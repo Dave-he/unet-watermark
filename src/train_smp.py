@@ -61,7 +61,8 @@ def train_epoch(model, train_loader, criterion, optimizer, device, metrics, cfg,
     metric_values = {'iou': 0.0, 'f1': 0.0, 'accuracy': 0.0, 'recall': 0.0, 'precision': 0.0}
     
     # 混合精度训练 - 使用新的统一 API
-    scaler = torch.GradScaler('cuda') if device.type == 'cuda' else None
+    # 混合精度训练 - 移除 device 参数
+    scaler = torch.GradScaler() if device.type == 'cuda' else None
     
     # 减少指标计算频率
     metric_calc_interval = max(1, len(train_loader) // 10)
