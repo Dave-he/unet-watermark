@@ -109,6 +109,8 @@ huggingface-cli upload heyongxian/watermark_images ./data --repo-type=dataset
 -mx9 最高压缩级别，-mmt=8 使用 8 线程加速
 7z a -t7z -mx9 -mmt=8 final.7z ./
 
+
+
 aws s3 --no-sign-request \
   --endpoint http://bs3-sgp.internal \
   cp mark-pro.zip s3://oversea-game/ai-model/
