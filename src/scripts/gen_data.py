@@ -55,7 +55,7 @@ def apply_watermark_effects(watermark, enhance_transparent=True):
     """对水印应用随机效果，特别针对透明水印优化"""
     if enhance_transparent:
         # 为透明水印使用更低的透明度范围，增加难度
-        alpha = random.uniform(0.1, 0.7)  # 降低最小透明度
+        alpha = random.uniform(0.1, 0.5)  # 降低最小透明度
     else:
         # 普通水印透明度
         alpha = random.uniform(0.3, 0.9)
