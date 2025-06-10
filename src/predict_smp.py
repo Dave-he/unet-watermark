@@ -260,7 +260,7 @@ class WatermarkPredictor:
                 'error': str(e)
             }
     
-    def process_batch(self, input_path, output_dir, save_mask=True, remove_watermark=False, iopaint_model='lama'):
+    def process_batch(self, input_path, output_dir, save_mask=True, remove_watermark=False, iopaint_model='lama', limit=None):
         """
         批量处理图像
         
@@ -270,6 +270,7 @@ class WatermarkPredictor:
             save_mask (bool): 是否保存掩码
             remove_watermark (bool): 是否去除水印
             iopaint_model (str): iopaint模型名称
+            limit (int, optional): 随机选择的图片数量限制，None表示处理所有图片
             
         Returns:
             list: 处理结果列表
@@ -287,6 +288,13 @@ class WatermarkPredictor:
         if not image_paths:
             logger.warning(f"在 {input_path} 中未找到图像文件")
             return []
+        
+        # 如果设置了limit参数，随机选择指定数量的图片
+        if limit is not None and limit > 0 and len(image_paths) > limit:
+            import random
+            random.shuffle(image_paths)
+            image_paths = image_paths[:limit]
+            logger.info(f"从 {len(os.listdir(input_path)) if os.path.isdir(input_path) else 1} 张图片中随机选择了 {limit} 张进行处理")
         
         logger.info(f"开始处理 {len(image_paths)} 张图像...")
         
@@ -323,6 +331,7 @@ def main():
     parser.add_argument('--remove-watermark', action='store_true', help='去除水印')
     parser.add_argument('--iopaint-model', type=str, default='lama', help='IOPaint模型')
     parser.add_argument('--list-checkpoints', type=str, help='列出指定目录的检查点')
+    parser.add_argument('--limit', type=int, help='随机选择的图片数量限制')
     
     args = parser.parse_args()
     
@@ -367,7 +376,8 @@ def main():
             args.output, 
             args.save_mask, 
             args.remove_watermark, 
-            args.iopaint_model
+            args.iopaint_model,
+            args.limit
         )
         
         # 保存结果摘要

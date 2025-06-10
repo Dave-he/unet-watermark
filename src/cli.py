@@ -167,9 +167,10 @@ def predict_command(args):
         results = predictor.process_batch(
             input_path=args.input,
             output_dir=args.output,
-            save_mask=args.save_mask or False,  # 修改为正确的参数名
+            save_mask=args.save_mask or False,
             remove_watermark=args.save_overlay or False,
-            iopaint_model='lama'
+            iopaint_model='lama',
+            limit=args.limit
         )
         
         print("\n预测完成！")
@@ -236,10 +237,12 @@ def main():
                                help='批次大小 (默认: 8)')
     predict_parser.add_argument('--threshold', type=float, default=0.5, 
                                help='二值化阈值 (默认: 0.5)')
-    predict_parser.add_argument('--save-mask', action='store_true',  # 修改为单数
+    predict_parser.add_argument('--save-mask', action='store_true',
                                help='保存预测掩码')
     predict_parser.add_argument('--save-overlay', action='store_true', 
                                help='保存叠加可视化图像')
+    predict_parser.add_argument('--limit', type=int, 
+                               help='随机选择的图片数量限制')
     
     # 解析参数
     args = parser.parse_args()
