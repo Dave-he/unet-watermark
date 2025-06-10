@@ -390,175 +390,175 @@ def main():
     except Exception as e:
         logger.error(f"预测器初始化失败: {str(e)}")
 
-def iterative_watermark_removal(self, image_path, output_dir, max_iterations=5, 
-                               watermark_threshold=0.01, iopaint_model='lama'):
-    """
-    循环检测和修复水印，直到图片清洁
-    
-    Args:
-        image_path (str): 输入图像路径
-        output_dir (str): 输出目录
-        max_iterations (int): 最大迭代次数
-        watermark_threshold (float): 水印面积阈值（相对于图片总面积）
-        iopaint_model (str): iopaint模型名称
+    def iterative_watermark_removal(self, image_path, output_dir, max_iterations=5, 
+                                   watermark_threshold=0.01, iopaint_model='lama'):
+        """
+        循环检测和修复水印，直到图片清洁
         
-    Returns:
-        dict: 处理结果
-    """
-    try:
-        import shutil
-        
-        # 创建输出目录
-        os.makedirs(output_dir, exist_ok=True)
-        
-        # 获取基础文件名
-        base_name = Path(image_path).stem
-        
-        # 创建临时工作目录
-        temp_dir = os.path.join(output_dir, f"temp_{base_name}")
-        os.makedirs(temp_dir, exist_ok=True)
-        
-        # 复制原始图片到工作目录
-        current_image = os.path.join(temp_dir, f"iteration_0.png")
-        shutil.copy2(image_path, current_image)
-        
-        iteration = 0
-        watermark_detected = True
-        
-        logger.info(f"开始循环修复: {image_path}")
-        
-        while watermark_detected and iteration < max_iterations:
-            iteration += 1
-            logger.info(f"第 {iteration} 次迭代检测...")
+        Args:
+            image_path (str): 输入图像路径
+            output_dir (str): 输出目录
+            max_iterations (int): 最大迭代次数
+            watermark_threshold (float): 水印面积阈值（相对于图片总面积）
+            iopaint_model (str): iopaint模型名称
             
-            # 预测当前图像的水印掩码
-            mask = self.predict_mask(current_image)
+        Returns:
+            dict: 处理结果
+        """
+        try:
+            import shutil
             
-            # 计算水印面积比例
-            image = cv2.imread(current_image)
-            total_pixels = image.shape[0] * image.shape[1]
-            watermark_pixels = np.sum(mask > 0)
-            watermark_ratio = watermark_pixels / total_pixels
+            # 创建输出目录
+            os.makedirs(output_dir, exist_ok=True)
             
-            logger.info(f"检测到水印面积比例: {watermark_ratio:.4f}")
+            # 获取基础文件名
+            base_name = Path(image_path).stem
             
-            # 检查是否还有显著水印
-            if watermark_ratio < watermark_threshold:
-                logger.info(f"水印面积低于阈值 {watermark_threshold}，修复完成")
-                watermark_detected = False
-                break
+            # 创建临时工作目录
+            temp_dir = os.path.join(output_dir, f"temp_{base_name}")
+            os.makedirs(temp_dir, exist_ok=True)
             
-            # 保存当前迭代的掩码
-            mask_path = os.path.join(temp_dir, f"mask_{iteration}.png")
-            cv2.imwrite(mask_path, mask)
+            # 复制原始图片到工作目录
+            current_image = os.path.join(temp_dir, f"iteration_0.png")
+            shutil.copy2(image_path, current_image)
             
-            # 使用iopaint去除水印
-            next_image = os.path.join(temp_dir, f"iteration_{iteration}.png")
-            success, message = self.remove_watermark_with_iopaint(
-                current_image, mask, next_image, iopaint_model
-            )
+            iteration = 0
+            watermark_detected = True
             
-            if not success:
-                logger.error(f"第 {iteration} 次修复失败: {message}")
-                break
+            logger.info(f"开始循环修复: {image_path}")
             
-            logger.info(f"第 {iteration} 次修复完成")
-            current_image = next_image
-        
-        # 保存最终结果
-        final_output = os.path.join(output_dir, f"{base_name}_cleaned.png")
-        shutil.copy2(current_image, final_output)
-        
-        # 清理临时目录
-        shutil.rmtree(temp_dir)
-        
-        result = {
-            'status': 'success',
-            'input': image_path,
-            'output': final_output,
-            'iterations': iteration,
-            'final_watermark_ratio': watermark_ratio if 'watermark_ratio' in locals() else 0,
-            'converged': not watermark_detected
-        }
-        
-        if watermark_detected:
-            logger.warning(f"达到最大迭代次数 {max_iterations}，可能仍有残留水印")
-            result['status'] = 'partial'
-        else:
-            logger.info(f"图片修复完成，共进行 {iteration} 次迭代")
-        
-        return result
-        
-    except Exception as e:
-        logger.error(f"循环修复失败 {image_path}: {str(e)}")
-        return {
-            'status': 'error',
-            'input': image_path,
-            'error': str(e)
-        }
+            while watermark_detected and iteration < max_iterations:
+                iteration += 1
+                logger.info(f"第 {iteration} 次迭代检测...")
+                
+                # 预测当前图像的水印掩码
+                mask = self.predict_mask(current_image)
+                
+                # 计算水印面积比例
+                image = cv2.imread(current_image)
+                total_pixels = image.shape[0] * image.shape[1]
+                watermark_pixels = np.sum(mask > 0)
+                watermark_ratio = watermark_pixels / total_pixels
+                
+                logger.info(f"检测到水印面积比例: {watermark_ratio:.4f}")
+                
+                # 检查是否还有显著水印
+                if watermark_ratio < watermark_threshold:
+                    logger.info(f"水印面积低于阈值 {watermark_threshold}，修复完成")
+                    watermark_detected = False
+                    break
+                
+                # 保存当前迭代的掩码
+                mask_path = os.path.join(temp_dir, f"mask_{iteration}.png")
+                cv2.imwrite(mask_path, mask)
+                
+                # 使用iopaint去除水印
+                next_image = os.path.join(temp_dir, f"iteration_{iteration}.png")
+                success, message = self.remove_watermark_with_iopaint(
+                    current_image, mask, next_image, iopaint_model
+                )
+                
+                if not success:
+                    logger.error(f"第 {iteration} 次修复失败: {message}")
+                    break
+                
+                logger.info(f"第 {iteration} 次修复完成")
+                current_image = next_image
+            
+            # 保存最终结果
+            final_output = os.path.join(output_dir, f"{base_name}_cleaned.png")
+            shutil.copy2(current_image, final_output)
+            
+            # 清理临时目录
+            shutil.rmtree(temp_dir)
+            
+            result = {
+                'status': 'success',
+                'input': image_path,
+                'output': final_output,
+                'iterations': iteration,
+                'final_watermark_ratio': watermark_ratio if 'watermark_ratio' in locals() else 0,
+                'converged': not watermark_detected
+            }
+            
+            if watermark_detected:
+                logger.warning(f"达到最大迭代次数 {max_iterations}，可能仍有残留水印")
+                result['status'] = 'partial'
+            else:
+                logger.info(f"图片修复完成，共进行 {iteration} 次迭代")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"循环修复失败 {image_path}: {str(e)}")
+            return {
+                'status': 'error',
+                'input': image_path,
+                'error': str(e)
+            }
 
-def process_batch_iterative(self, input_path, output_dir, max_iterations=5, 
-                           watermark_threshold=0.01, iopaint_model='lama', limit=None):
-    """
-    批量循环修复图像
-    
-    Args:
-        input_path (str): 输入路径（文件或目录）
-        output_dir (str): 输出目录
-        max_iterations (int): 最大迭代次数
-        watermark_threshold (float): 水印面积阈值
-        iopaint_model (str): iopaint模型名称
-        limit (int, optional): 随机选择的图片数量限制
+    def process_batch_iterative(self, input_path, output_dir, max_iterations=5,
+                               watermark_threshold=0.01, iopaint_model='lama', limit=None):
+        """
+        批量循环修复图像
         
-    Returns:
-        list: 处理结果列表
-    """
-    # 获取图像路径列表
-    image_paths = []
-    if os.path.isdir(input_path):
-        for filename in os.listdir(input_path):
-            if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp')):
-                image_paths.append(os.path.join(input_path, filename))
-    elif os.path.isfile(input_path):
-        if input_path.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp')):
-            image_paths.append(input_path)
-    
-    if not image_paths:
-        logger.warning(f"在 {input_path} 中未找到图像文件")
-        return []
-    
-    # 如果设置了limit参数，随机选择指定数量的图片
-    if limit is not None and limit > 0 and len(image_paths) > limit:
-        import random
-        random.shuffle(image_paths)
-        image_paths = image_paths[:limit]
-        logger.info(f"从 {len(os.listdir(input_path)) if os.path.isdir(input_path) else 1} 张图片中随机选择了 {limit} 张进行循环修复")
-    
-    logger.info(f"开始循环修复 {len(image_paths)} 张图像...")
-    
-    results = []
-    for image_path in tqdm(image_paths, desc="循环修复图像"):
-        result = self.iterative_watermark_removal(
-            image_path, output_dir, max_iterations, watermark_threshold, iopaint_model
-        )
-        results.append(result)
-    
-    # 打印统计信息
-    successful = sum(1 for r in results if r['status'] == 'success')
-    partial = sum(1 for r in results if r['status'] == 'partial')
-    failed = sum(1 for r in results if r['status'] == 'error')
-    
-    avg_iterations = np.mean([r.get('iterations', 0) for r in results if 'iterations' in r])
-    converged_count = sum(1 for r in results if r.get('converged', False))
-    
-    logger.info(f"\n循环修复完成！")
-    logger.info(f"完全成功: {successful}")
-    logger.info(f"部分成功: {partial}")
-    logger.info(f"失败: {failed}")
-    logger.info(f"平均迭代次数: {avg_iterations:.1f}")
-    logger.info(f"完全收敛: {converged_count}/{len(results)}")
-    
-    return results
+        Args:
+            input_path (str): 输入路径（文件或目录）
+            output_dir (str): 输出目录
+            max_iterations (int): 最大迭代次数
+            watermark_threshold (float): 水印面积阈值
+            iopaint_model (str): iopaint模型名称
+            limit (int, optional): 随机选择的图片数量限制
+            
+        Returns:
+            list: 处理结果列表
+        """
+        # 获取图像路径列表
+        image_paths = []
+        if os.path.isdir(input_path):
+            for filename in os.listdir(input_path):
+                if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp')):
+                    image_paths.append(os.path.join(input_path, filename))
+        elif os.path.isfile(input_path):
+            if input_path.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp')):
+                image_paths.append(input_path)
+        
+        if not image_paths:
+            logger.warning(f"在 {input_path} 中未找到图像文件")
+            return []
+        
+        # 如果设置了limit参数，随机选择指定数量的图片
+        if limit is not None and limit > 0 and len(image_paths) > limit:
+            import random
+            random.shuffle(image_paths)
+            image_paths = image_paths[:limit]
+            logger.info(f"从 {len(os.listdir(input_path)) if os.path.isdir(input_path) else 1} 张图片中随机选择了 {limit} 张进行循环修复")
+        
+        logger.info(f"开始循环修复 {len(image_paths)} 张图像...")
+        
+        results = []
+        for image_path in tqdm(image_paths, desc="循环修复图像"):
+            result = self.iterative_watermark_removal(
+                image_path, output_dir, max_iterations, watermark_threshold, iopaint_model
+            )
+            results.append(result)
+        
+        # 打印统计信息
+        successful = sum(1 for r in results if r['status'] == 'success')
+        partial = sum(1 for r in results if r['status'] == 'partial')
+        failed = sum(1 for r in results if r['status'] == 'error')
+        
+        avg_iterations = np.mean([r.get('iterations', 0) for r in results if 'iterations' in r])
+        converged_count = sum(1 for r in results if r.get('converged', False))
+        
+        logger.info(f"\n循环修复完成！")
+        logger.info(f"完全成功: {successful}")
+        logger.info(f"部分成功: {partial}")
+        logger.info(f"失败: {failed}")
+        logger.info(f"平均迭代次数: {avg_iterations:.1f}")
+        logger.info(f"完全收敛: {converged_count}/{len(results)}")
+        
+        return results
 
 if __name__ == "__main__":
     main()
