@@ -8,6 +8,7 @@
 import os
 import sys
 import argparse
+import subprocess
 import torch
 
 from configs.config import get_cfg_defaults, update_config
@@ -183,6 +184,88 @@ def predict_command(args):
         raise
 
 
+def iterative_repair_command(args):
+    """执行循环修复命令"""
+    print("="*60)
+    print("开始循环水印检测和修复")
+    print("="*60)
+    
+    # 检查必要参数
+    if not args.input:
+        raise ValueError("循环修复模式需要指定输入路径 --input")
+    if not args.output:
+        raise ValueError("循环修复模式需要指定输出路径 --output")
+    if not args.model:
+        raise ValueError("循环修复模式需要指定模型路径 --model")
+    
+    # 检查文件/目录是否存在
+    if not os.path.exists(args.input):
+        raise FileNotFoundError(f"输入路径不存在: {args.input}")
+    if not os.path.exists(args.model):
+        raise FileNotFoundError(f"模型文件不存在: {args.model}")
+    
+    # 设置设备
+    device = setup_device(args.device or 'auto')
+    
+    # 创建输出目录
+    os.makedirs(args.output, exist_ok=True)
+    
+    # 打印修复信息
+    print(f"输入路径: {args.input}")
+    print(f"输出路径: {args.output}")
+    print(f"模型路径: {args.model}")
+    print(f"最大迭代次数: {args.max_iterations or 5}")
+    print(f"水印阈值: {args.watermark_threshold or 0.01}")
+    print(f"IOPaint模型: {args.iopaint_model or 'lama'}")
+    print()
+    
+    # 检查iopaint是否安装
+    try:
+        subprocess.run(['iopaint', '--help'], capture_output=True, check=True)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        print("错误: iopaint未安装。请使用以下命令安装:")
+        print("pip install iopaint")
+        return
+    
+    try:
+        # 加载配置（如果提供）
+        cfg = get_cfg_defaults()
+        if args.config:
+            update_config(cfg, args.config)
+        
+        # 创建预测器
+        predictor = WatermarkPredictor(
+            model_path=args.model,
+            config_path=args.config,
+            device=str(device)
+        )
+        
+        # 覆盖阈值配置
+        if args.threshold is not None:
+            predictor.cfg.PREDICT.THRESHOLD = args.threshold
+        
+        # 执行循环修复
+        results = predictor.process_batch_iterative(
+            input_path=args.input,
+            output_dir=args.output,
+            max_iterations=args.max_iterations or 5,
+            watermark_threshold=args.watermark_threshold or 0.01,
+            iopaint_model=args.iopaint_model or 'lama',
+            limit=args.limit
+        )
+        
+        # 保存结果摘要
+        import json
+        summary_path = os.path.join(args.output, 'iterative_repair_summary.json')
+        with open(summary_path, 'w', encoding='utf-8') as f:
+            json.dump(results, f, indent=2, ensure_ascii=False)
+        print(f"处理摘要已保存: {summary_path}")
+        
+    except Exception as e:
+        print(f"循环修复过程中出现错误: {str(e)}")
+        raise
+
+
 def main():
     """主函数 - 解析命令行参数并执行相应操作"""
     parser = argparse.ArgumentParser(
@@ -197,6 +280,10 @@ def main():
   预测模式:
     python main.py predict --input data/test --output results --model models/best_model.pth
     python main.py predict --input single_image.jpg --output results --model models/best_model.pth --save-mask
+    
+  循环修复模式:
+    python main.py repair --input data/test --output results --model models/best_model.pth
+    python main.py repair --input single_image.jpg --output results --model models/best_model.pth --max-iterations 10
         """
     )
     
@@ -244,6 +331,28 @@ def main():
     predict_parser.add_argument('--limit', type=int, 
                                help='随机选择的图片数量限制')
     
+    # 循环修复命令
+    repair_parser = subparsers.add_parser('repair', help='循环检测和修复水印')
+    repair_parser.add_argument('--input', type=str, required=True, 
+                              help='输入图像路径或目录')
+    repair_parser.add_argument('--output', type=str, required=True, 
+                              help='输出目录')
+    repair_parser.add_argument('--model', type=str, required=True, 
+                              help='模型文件路径')
+    repair_parser.add_argument('--config', type=str, help='配置文件路径')
+    repair_parser.add_argument('--device', type=str, 
+                              default='auto', help='计算设备 (默认: auto)')
+    repair_parser.add_argument('--threshold', type=float, default=0.5, 
+                              help='二值化阈值 (默认: 0.5)')
+    repair_parser.add_argument('--max-iterations', type=int, default=5,
+                              help='最大迭代次数 (默认: 5)')
+    repair_parser.add_argument('--watermark-threshold', type=float, default=0.01,
+                              help='水印面积阈值，低于此值认为修复完成 (默认: 0.01)')
+    repair_parser.add_argument('--iopaint-model', type=str, default='lama',
+                              help='IOPaint修复模型 (默认: lama)')
+    repair_parser.add_argument('--limit', type=int, 
+                              help='随机选择的图片数量限制')
+    
     # 解析参数
     args = parser.parse_args()
     
@@ -258,11 +367,13 @@ def main():
             train_command(args)
         elif args.command == 'predict':
             predict_command(args)
+        elif args.command == 'repair':
+            iterative_repair_command(args)
         else:
             parser.print_help()
             
     except KeyboardInterrupt:
         print("\n用户中断操作")
     except Exception as e:
-        print(f"\n错误: {str(e)}")
+        print(f"执行命令时出现错误: {str(e)}")
         sys.exit(1)
