@@ -95,6 +95,8 @@ python main.py predict --input test.jpg --output results3 --model models/checkpo
 iopaint run --model=lama \
   --device=cpu --image=data/input1 --mask=data/result1 \
   --output=data/out1 --model-dir=~/.cache
+
+python main.py repair
 ```
 
 

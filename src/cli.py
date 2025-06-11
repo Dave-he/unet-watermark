@@ -311,7 +311,7 @@ def main():
     
     # 预测命令
     predict_parser = subparsers.add_parser('predict', help='预测/推理')
-    predict_parser.add_argument('--input', type=str, default='/Users/hyx/Pictures/image2',
+    predict_parser.add_argument('--input', type=str, default= 'data/test',
                                help='输入图像路径或目录')
     predict_parser.add_argument('--output', type=str, default='data/result',
                                help='输出目录')
@@ -333,7 +333,7 @@ def main():
     
     # 循环修复命令
     repair_parser = subparsers.add_parser('repair', help='循环检测和修复水印')
-    repair_parser.add_argument('--input', type=str, default='data/test',
+    repair_parser.add_argument('--input', type=str, default='/Users/hyx/Pictures/image2',
                               help='输入图像路径或目录')
     repair_parser.add_argument('--output', type=str, default='data/result',
                               help='输出目录')
@@ -344,13 +344,13 @@ def main():
                               default='auto', help='计算设备 (默认: auto)')
     repair_parser.add_argument('--threshold', type=float, default=0.5, 
                               help='二值化阈值 (默认: 0.5)')
-    repair_parser.add_argument('--max-iterations', type=int, default=5,
-                              help='最大迭代次数 (默认: 5)')
+    repair_parser.add_argument('--max-iterations', type=int, default=10,
+                              help='最大迭代次数 (默认: 10)')
     repair_parser.add_argument('--watermark-threshold', type=float, default=0.01,
-                              help='水印面积阈值，低于此值认为修复完成 (默认: 0.01)')
+                              help='水印面积阈值，低于此值认为修复完成 (默认: 0.001)')
     repair_parser.add_argument('--iopaint-model', type=str, default='lama',
                               help='IOPaint修复模型 (默认: lama)')
-    repair_parser.add_argument('--limit', type=int, 
+    repair_parser.add_argument('--limit', type=int, default=10,
                               help='随机选择的图片数量限制')
     
     # 解析参数
