@@ -160,23 +160,34 @@ class WatermarkPredictor:
             
             iteration = 0
             
+            # 添加总体进度条
+            total_progress = tqdm(total=len(image_paths) * max_iterations, 
+                                 desc="总体进度", 
+                                 unit="步骤",
+                                 position=0)
+            
             # 开始迭代处理
             while iteration < max_iterations:
                 iteration += 1
-                logger.info(f"\n=== 第 {iteration} 次批量迭代 ===")
                 
-                # 统计本轮需要处理的图片数量
+                # 添加当前轮次进度条
                 pending_images = [name for name, info in current_images.items() if not info['completed']]
                 if not pending_images:
-                    logger.info("所有图片都已完成处理")
                     break
+                    
+                # 改进的轮次进度条，显示更多信息
+                iteration_progress = tqdm(pending_images, 
+                                        desc=f"第{iteration}/{max_iterations}轮",
+                                        unit="张",
+                                        position=1,
+                                        leave=False)
                 
-                logger.info(f"本轮处理 {len(pending_images)} 张图片")
-                
-                # 处理每张未完成的图片
-                for base_name in tqdm(pending_images, desc=f"第{iteration}轮迭代"):
-                    info = current_images[base_name]
-                    current_image_path = info['current_path']
+                for base_name in iteration_progress:
+                    # 更新进度条描述，显示当前处理的图片
+                    iteration_progress.set_postfix({
+                        '当前': base_name[:20] + '...' if len(base_name) > 20 else base_name,
+                        '已完成': f"{sum(1 for info in current_images.values() if info['completed'])}/{len(image_paths)}"
+                    })
                     
                     # 预测水印掩码
                     mask = self.predict_mask(current_image_path)

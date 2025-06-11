@@ -10,6 +10,9 @@ opencv-python>=4.5.0
 Pillow>=8.0.0
 numpy>=1.21.0
 
+# 视频合成
+moviepy>=1.0.3
+
 # 数据增强
 albumentations>=1.3.0
 
