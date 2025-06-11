@@ -40,9 +40,102 @@ class WatermarkPredictor:
         # 数据变换
         self.transform = get_val_transform(self.cfg.DATA.IMG_SIZE)
         
+        # 添加多模型支持
+        self.current_model_path = model_path
+        self.available_models = self._find_available_models(model_path)
+        self.current_model_index = 0
+        
         logger.info(f"预测器初始化完成，使用设备: {self.device}")
+        logger.info(f"发现可用模型: {len(self.available_models)} 个")
         self._print_model_info()
     
+    def _find_available_models(self, current_model_path):
+        """查找models目录下的所有可用模型"""
+        models_dir = os.path.dirname(current_model_path)
+        available_models = []
+        
+        if os.path.exists(models_dir):
+            for filename in os.listdir(models_dir):
+                if filename.endswith('.pth'):
+                    model_path = os.path.join(models_dir, filename)
+                    available_models.append(model_path)
+        
+        # 确保当前模型在列表中且排在第一位
+        if current_model_path in available_models:
+            available_models.remove(current_model_path)
+        available_models.insert(0, current_model_path)
+        
+        return available_models
+    
+    def switch_to_next_model(self):
+        """切换到下一个可用模型"""
+        if self.current_model_index < len(self.available_models) - 1:
+            self.current_model_index += 1
+            new_model_path = self.available_models[self.current_model_index]
+            
+            logger.info(f"切换到模型: {os.path.basename(new_model_path)}")
+            
+            # 重新加载模型
+            self.model, self.model_info = self._load_model(new_model_path)
+            self.current_model_path = new_model_path
+            
+            return True
+        return False
+    
+    def reset_to_first_model(self):
+        """重置到第一个模型"""
+        if self.current_model_index != 0:
+            self.current_model_index = 0
+            first_model_path = self.available_models[0]
+            
+            logger.info(f"重置到第一个模型: {os.path.basename(first_model_path)}")
+            
+            # 重新加载模型
+            self.model, self.model_info = self._load_model(first_model_path)
+            self.current_model_path = first_model_path
+    
+    def predict_mask_with_model_switching(self, image_path, min_watermark_threshold=0.001):
+        """
+        使用模型切换策略预测水印掩码
+        
+        Args:
+            image_path (str): 图像路径
+            min_watermark_threshold (float): 最小水印阈值，低于此值认为没有检测到水印
+            
+        Returns:
+            tuple: (mask, model_used, watermark_detected)
+        """
+        # 重置到第一个模型
+        self.reset_to_first_model()
+        
+        for model_idx in range(len(self.available_models)):
+            current_model_name = os.path.basename(self.current_model_path)
+            logger.info(f"使用模型 {current_model_name} 检测图像: {os.path.basename(image_path)}")
+            
+            # 预测掩码
+            mask = self.predict_mask(image_path)
+            
+            # 计算水印面积比例
+            image = cv2.imread(image_path)
+            total_pixels = image.shape[0] * image.shape[1]
+            watermark_pixels = np.sum(mask > 0)
+            watermark_ratio = watermark_pixels / total_pixels
+            
+            logger.info(f"模型 {current_model_name} 检测到水印面积比例: {watermark_ratio:.6f}")
+            
+            # 如果检测到足够的水印区域，返回结果
+            if watermark_ratio >= min_watermark_threshold:
+                logger.info(f"模型 {current_model_name} 成功检测到水印")
+                return mask, current_model_name, True
+            
+            # 尝试下一个模型
+            if not self.switch_to_next_model():
+                break
+        
+        # 所有模型都没有检测到水印
+        logger.info("所有模型都未检测到显著水印区域")
+        return mask, current_model_name, False
+
     def _load_model(self, model_path):
         """加载模型"""
         if not os.path.exists(model_path):
@@ -99,7 +192,7 @@ class WatermarkPredictor:
     def process_batch_iterative(self, input_path, output_dir, max_iterations=5,
                                watermark_threshold=0.01, iopaint_model='lama', limit=None):
         """
-        批量循环修复图像 - 修改版本
+        批量循环修复图像 - 增强版本，支持多模型检测
         将原图拷贝到临时目录，按批次迭代处理，直到所有图片都没有水印
         
         Args:
@@ -142,6 +235,7 @@ class WatermarkPredictor:
         os.makedirs(temp_dir, exist_ok=True)
         
         logger.info(f"开始批量循环修复 {len(image_paths)} 张图像...")
+        logger.info(f"可用模型数量: {len(self.available_models)}")
         
         try:
             # 初始化：将所有原图拷贝到临时目录
@@ -155,7 +249,9 @@ class WatermarkPredictor:
                     'original_path': image_path,
                     'completed': False,
                     'iterations': 0,
-                    'final_watermark_ratio': 0
+                    'final_watermark_ratio': 0,
+                    'models_tried': [],  # 记录尝试过的模型
+                    'detection_model': None  # 记录最终检测到水印的模型
                 }
             
             iteration = 0
@@ -183,14 +279,23 @@ class WatermarkPredictor:
                                         leave=False)
                 
                 for base_name in iteration_progress:
+                    # 跳过已完成的图片
+                    if current_images[base_name]['completed']:
+                        continue
+                        
+                    # 获取当前图片路径
+                    current_image_path = current_images[base_name]['current_path']
+                    
                     # 更新进度条描述，显示当前处理的图片
                     iteration_progress.set_postfix({
                         '当前': base_name[:20] + '...' if len(base_name) > 20 else base_name,
                         '已完成': f"{sum(1 for info in current_images.values() if info['completed'])}/{len(image_paths)}"
                     })
                     
-                    # 预测水印掩码
-                    mask = self.predict_mask(current_image_path)
+                    # 使用多模型检测策略预测水印掩码
+                    mask, model_used, watermark_detected = self.predict_mask_with_model_switching(
+                        current_image_path, min_watermark_threshold=0.001
+                    )
                     
                     # 计算水印面积比例
                     image = cv2.imread(current_image_path)
@@ -198,11 +303,14 @@ class WatermarkPredictor:
                     watermark_pixels = np.sum(mask > 0)
                     watermark_ratio = watermark_pixels / total_pixels
                     
+                    # 更新图片信息
+                    info = current_images[base_name]
                     info['final_watermark_ratio'] = watermark_ratio
+                    info['detection_model'] = model_used
                     
-                    # 检查是否还有显著水印
-                    if watermark_ratio < watermark_threshold:
-                        logger.info(f"{base_name}: 水印面积 {watermark_ratio:.4f} 低于阈值，完成处理")
+                    # 如果所有模型都没有检测到水印，认为图片已经清理完成
+                    if not watermark_detected:
+                        logger.info(f"{base_name}: 所有模型都未检测到水印，认为清理完成")
                         # 将图片移动到最终输出目录
                         final_output = os.path.join(output_dir, f"{base_name}_cleaned.png")
                         shutil.copy2(current_image_path, final_output)
@@ -210,10 +318,20 @@ class WatermarkPredictor:
                         info['iterations'] = iteration - 1  # 实际修复次数
                         continue
                     
-                    logger.info(f"{base_name}: 检测到水印面积比例 {watermark_ratio:.4f}")
+                    # 检查是否还有显著水印
+                    if watermark_ratio < watermark_threshold:
+                        logger.info(f"{base_name}: 水印面积 {watermark_ratio:.6f} 低于阈值，完成处理")
+                        # 将图片移动到最终输出目录
+                        final_output = os.path.join(output_dir, f"{base_name}_cleaned.png")
+                        shutil.copy2(current_image_path, final_output)
+                        info['completed'] = True
+                        info['iterations'] = iteration - 1  # 实际修复次数
+                        continue
+                    
+                    logger.info(f"{base_name}: 模型 {model_used} 检测到水印面积比例 {watermark_ratio:.6f}")
                     
                     # 保存掩码（可选）
-                    mask_path = os.path.join(temp_dir, f"{base_name}_mask_iter{iteration}.png")
+                    mask_path = os.path.join(temp_dir, f"{base_name}_mask_iter{iteration}_{model_used.replace('.pth', '')}.png")
                     cv2.imwrite(mask_path, mask)
                     
                     # 使用iopaint去除水印
@@ -224,7 +342,7 @@ class WatermarkPredictor:
                     
                     if success:
                         info['current_path'] = next_image_path
-                        logger.info(f"{base_name}: 第 {iteration} 次修复完成")
+                        logger.info(f"{base_name}: 第 {iteration} 次修复完成 (使用模型: {model_used})")
                     else:
                         logger.error(f"{base_name}: 第 {iteration} 次修复失败: {message}")
                         # 修复失败的图片标记为完成，避免无限循环
@@ -254,7 +372,8 @@ class WatermarkPredictor:
                     'output': os.path.join(output_dir, f"{base_name}_cleaned.png" if info['final_watermark_ratio'] < watermark_threshold else f"{base_name}_partial_cleaned.png"),
                     'iterations': info['iterations'],
                     'final_watermark_ratio': info['final_watermark_ratio'],
-                    'converged': info['final_watermark_ratio'] < watermark_threshold
+                    'converged': info['final_watermark_ratio'] < watermark_threshold,
+                    'detection_model': info['detection_model']  # 添加检测模型信息
                 }
                 results.append(result)
             
@@ -265,12 +384,20 @@ class WatermarkPredictor:
             avg_iterations = np.mean([r['iterations'] for r in results])
             converged_count = sum(1 for r in results if r['converged'])
             
+            # 统计使用的模型
+            model_usage = {}
+            for r in results:
+                if r['detection_model']:
+                    model_name = r['detection_model']
+                    model_usage[model_name] = model_usage.get(model_name, 0) + 1
+            
             logger.info(f"\n批量循环修复完成！")
             logger.info(f"完全成功: {successful}")
             logger.info(f"部分成功: {partial}")
             logger.info(f"失败: 0")
             logger.info(f"平均迭代次数: {avg_iterations:.1f}")
             logger.info(f"完全收敛: {converged_count}/{len(results)}")
+            logger.info(f"模型使用统计: {model_usage}")
             
             return results
             

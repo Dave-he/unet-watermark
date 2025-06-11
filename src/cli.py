@@ -315,7 +315,7 @@ def main():
                                help='输入图像路径或目录')
     predict_parser.add_argument('--output', type=str, default='data/result',
                                help='输出目录')
-    predict_parser.add_argument('--model', type=str, default='models/epoch_300.pth',
+    predict_parser.add_argument('--model', type=str, default='models/',
                                help='模型文件路径')
     predict_parser.add_argument('--config', type=str, help='配置文件路径')
     predict_parser.add_argument('--device', type=str, 
@@ -324,7 +324,7 @@ def main():
                                help='批次大小 (默认: 8)')
     predict_parser.add_argument('--threshold', type=float, default=0.5, 
                                help='二值化阈值 (默认: 0.5)')
-    predict_parser.add_argument('--save-mask', action='store_true',
+    predict_parser.add_argument('--save-mask', action='store_true', default=True,
                                help='保存预测掩码')
     predict_parser.add_argument('--save-overlay', action='store_true', 
                                help='保存叠加可视化图像')
@@ -333,7 +333,7 @@ def main():
     
     # 循环修复命令
     repair_parser = subparsers.add_parser('repair', help='循环检测和修复水印')
-    repair_parser.add_argument('--input', type=str, default='/Users/hyx/Pictures/image2',
+    repair_parser.add_argument('--input', type=str, default='/Users/hyx/Pictures/image',
                               help='输入图像路径或目录')
     repair_parser.add_argument('--output', type=str, default='data/result',
                               help='输出目录')
@@ -346,8 +346,12 @@ def main():
                               help='二值化阈值 (默认: 0.5)')
     repair_parser.add_argument('--max-iterations', type=int, default=10,
                               help='最大迭代次数 (默认: 10)')
-    repair_parser.add_argument('--watermark-threshold', type=float, default=0.01,
-                              help='水印面积阈值，低于此值认为修复完成 (默认: 0.001)')
+    repair_parser.add_argument('--save-mask', action='store_true', default=True,
+                            help='保存预测掩码')
+    repair_parser.add_argument('--watermark-threshold', type=float, default=0.000001,
+                              help='水印面积阈值，低于此值认为修复完成 (默认: 0.000001)')
+    repair_parser.add_argument('--min-detection-threshold', type=float, default=0.00001,
+                              help='最小检测阈值，低于此值认为模型未检测到水印 (默认: 0.00001)')
     repair_parser.add_argument('--iopaint-model', type=str, default='lama',
                               help='IOPaint修复模型 (默认: lama)')
     repair_parser.add_argument('--limit', type=int, default=10,
