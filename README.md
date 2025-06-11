@@ -88,6 +88,9 @@ python main.py train \
 python main.py predict --input data/input1/ --output data/result1 --model models/watermark.pth
 python main.py predict --input test.jpg --output results2 --model models/checkpoints/checkpoint_epoch_100.pth
 python main.py predict --input test.jpg --output results3 --model models/checkpoints/checkpoint_epoch_150.pth
+
+1.尝试试降低二值化阈值，提高模型敏感度
+2.确保新图片与训练数据具有相似的特征
 ```
 
 ``` bash
