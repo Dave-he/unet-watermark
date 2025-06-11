@@ -322,7 +322,7 @@ def main():
                                default='auto', help='计算设备 (默认: auto)')
     predict_parser.add_argument('--batch-size', type=int, default=8, 
                                help='批次大小 (默认: 8)')
-    predict_parser.add_argument('--threshold', type=float, default=0.5, 
+    predict_parser.add_argument('--threshold', type=float, default=0.3, 
                                help='二值化阈值 (默认: 0.5)')
     predict_parser.add_argument('--save-mask', action='store_true', default=True,
                                help='保存预测掩码')
@@ -342,7 +342,7 @@ def main():
     repair_parser.add_argument('--config', type=str, help='配置文件路径')
     repair_parser.add_argument('--device', type=str, 
                               default='auto', help='计算设备 (默认: auto)')
-    repair_parser.add_argument('--threshold', type=float, default=0.5, 
+    repair_parser.add_argument('--threshold', type=float, default=0.3, 
                               help='二值化阈值 (默认: 0.5)')
     repair_parser.add_argument('--max-iterations', type=int, default=10,
                               help='最大迭代次数 (默认: 10)')
@@ -350,8 +350,8 @@ def main():
                             help='保存预测掩码')
     repair_parser.add_argument('--watermark-threshold', type=float, default=0.000001,
                               help='水印面积阈值，低于此值认为修复完成 (默认: 0.000001)')
-    repair_parser.add_argument('--min-detection-threshold', type=float, default=0.00001,
-                              help='最小检测阈值，低于此值认为模型未检测到水印 (默认: 0.00001)')
+    repair_parser.add_argument('--min-detection-threshold', type=float, default=0.01,
+                              help='最小检测阈值，低于此值认为模型未检测到水印 (默认: 0.01)')
     repair_parser.add_argument('--iopaint-model', type=str, default='lama',
                               help='IOPaint修复模型 (默认: lama)')
     repair_parser.add_argument('--limit', type=int, default=10,
