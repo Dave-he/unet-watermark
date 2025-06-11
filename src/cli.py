@@ -311,11 +311,11 @@ def main():
     
     # 预测命令
     predict_parser = subparsers.add_parser('predict', help='预测/推理')
-    predict_parser.add_argument('--input', type=str, required=True, 
+    predict_parser.add_argument('--input', type=str, default='/Users/hyx/Pictures/image2',
                                help='输入图像路径或目录')
-    predict_parser.add_argument('--output', type=str, required=True, 
+    predict_parser.add_argument('--output', type=str, default='data/result',
                                help='输出目录')
-    predict_parser.add_argument('--model', type=str, required=True, 
+    predict_parser.add_argument('--model', type=str, default='models/epoch_300.pth',
                                help='模型文件路径')
     predict_parser.add_argument('--config', type=str, help='配置文件路径')
     predict_parser.add_argument('--device', type=str, 
@@ -333,11 +333,11 @@ def main():
     
     # 循环修复命令
     repair_parser = subparsers.add_parser('repair', help='循环检测和修复水印')
-    repair_parser.add_argument('--input', type=str, required=True, 
+    repair_parser.add_argument('--input', type=str, default='data/test',
                               help='输入图像路径或目录')
-    repair_parser.add_argument('--output', type=str, required=True, 
+    repair_parser.add_argument('--output', type=str, default='data/result',
                               help='输出目录')
-    repair_parser.add_argument('--model', type=str, required=True, 
+    repair_parser.add_argument('--model', type=str, default='models/epoch_300.pth',
                               help='模型文件路径')
     repair_parser.add_argument('--config', type=str, help='配置文件路径')
     repair_parser.add_argument('--device', type=str, 

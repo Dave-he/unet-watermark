@@ -9,7 +9,7 @@ Usage:
     python main.py train --config src/configs/unet_watermark.yaml --device cuda
     
     # 预测模式
-    python main.py predict --input data/test --output results --model models/best_model.pth
+    python main.py predict --input data/test --output results --model models/epoch_300.pth
     
     # 查看帮助
     python main.py --help
