@@ -339,8 +339,8 @@ class WatermarkPredictor:
                     logger.info("所有图片都已完成处理")
                     break
                 
-                # 第二阶段：批量修复
-                self._stage2_batch_repair(
+                    # 第二阶段：批量修复（使用优化版本）
+                self._stage2_batch_repair_optimized(
                     image_status, temp_dir, iteration, iopaint_model
                 )
                 
@@ -495,6 +495,99 @@ class WatermarkPredictor:
                 logger.error(f"{image_name}: 修复过程出错: {str(e)}")
                 info['completed'] = True
                 info['iterations'] = iteration
+
+    def _stage2_batch_repair_optimized(self, image_status, temp_dir, iteration, iopaint_model):
+        """
+        第二阶段：批量修复（优化版本 - 统一批量处理）
+        
+        Args:
+            image_status (dict): 图片状态字典
+            temp_dir (str): 临时目录
+            iteration (int): 当前迭代次数
+            iopaint_model (str): iopaint模型名称
+        """
+        logger.info("第二阶段：批量修复（优化版本）")
+        
+        # 收集需要修复的图片
+        repair_tasks = []
+        for image_name, info in image_status.items():
+            if not info['completed'] and 'mask_path' in info:
+                repair_tasks.append((image_name, info))
+        
+        if not repair_tasks:
+            logger.info("没有需要修复的图片")
+            return
+        
+        logger.info(f"准备批量修复 {len(repair_tasks)} 张图片")
+        
+        # 创建批量处理的临时目录
+        batch_input_dir = os.path.join(temp_dir, f"batch_input_iter{iteration}")
+        batch_mask_dir = os.path.join(temp_dir, f"batch_mask_iter{iteration}")
+        batch_output_dir = os.path.join(temp_dir, f"batch_output_iter{iteration}")
+        
+        os.makedirs(batch_input_dir, exist_ok=True)
+        os.makedirs(batch_mask_dir, exist_ok=True)
+        os.makedirs(batch_output_dir, exist_ok=True)
+        
+        # 准备批量处理的文件
+        batch_mapping = {}  # 映射批量文件名到原始图片名
+        
+        for image_name, info in repair_tasks:
+            # 复制图片到批量输入目录
+            batch_image_name = f"{image_name}.png"
+            batch_image_path = os.path.join(batch_input_dir, batch_image_name)
+            shutil.copy2(info['current_path'], batch_image_path)
+            
+            # 复制mask到批量mask目录
+            batch_mask_path = os.path.join(batch_mask_dir, batch_image_name)
+            shutil.copy2(info['mask_path'], batch_mask_path)
+            
+            batch_mapping[batch_image_name] = image_name
+        
+        try:
+            # 执行批量iopaint处理
+            success, message = self.batch_remove_watermark_with_iopaint(
+                batch_input_dir, batch_mask_dir, batch_output_dir, iopaint_model
+            )
+            
+            if success:
+                # 处理批量修复结果
+                for batch_image_name, image_name in batch_mapping.items():
+                    batch_output_path = os.path.join(batch_output_dir, batch_image_name)
+                    
+                    if os.path.exists(batch_output_path):
+                        # 更新图片状态
+                        new_current_path = os.path.join(temp_dir, f"{image_name}_iter{iteration}.png")
+                        shutil.copy2(batch_output_path, new_current_path)
+                        
+                        image_status[image_name]['current_path'] = new_current_path
+                        image_status[image_name]['iterations'] = iteration
+                        logger.info(f"{image_name}: 批量修复完成")
+                    else:
+                        logger.error(f"{image_name}: 批量修复输出文件不存在")
+                        image_status[image_name]['completed'] = True
+                        image_status[image_name]['iterations'] = iteration
+            else:
+                logger.error(f"批量修复失败: {message}")
+                # 标记所有任务为失败
+                for image_name, info in repair_tasks:
+                    info['completed'] = True
+                    info['iterations'] = iteration
+        
+        finally:
+            # 清理批量处理临时目录和mask文件
+            for temp_dir_path in [batch_input_dir, batch_mask_dir, batch_output_dir]:
+                if os.path.exists(temp_dir_path):
+                    shutil.rmtree(temp_dir_path, ignore_errors=True)
+            
+            # 清理mask文件
+            for image_name, info in repair_tasks:
+                if 'mask_path' in info:
+                    try:
+                        os.remove(info['mask_path'])
+                    except:
+                        pass
+                    del info['mask_path']
 
     def _copy_final_results(self, image_status, output_folder):
         """
@@ -956,6 +1049,51 @@ class WatermarkPredictor:
                     os.unlink(temp_mask_path)
                 except Exception as e:
                     logger.warning(f"清理临时掩码文件失败: {e}")
+
+    def batch_remove_watermark_with_iopaint(self, input_dir, mask_dir, output_dir, model_name='lama', timeout=600):
+        """
+        使用iopaint批量去除水印
+        
+        Args:
+            input_dir (str): 输入图片目录
+            mask_dir (str): mask目录
+            output_dir (str): 输出目录
+            model_name (str): iopaint模型名称
+            timeout (int): 超时时间（秒）
+            
+        Returns:
+            tuple: (成功标志, 消息)
+        """
+        try:
+            # 准备iopaint批量命令
+            cmd = [
+                'iopaint', 'run',
+                '--model', model_name,
+                '--device', self.device.type,
+                '--input', input_dir,
+                '--mask-dir', mask_dir,
+                '--output', output_dir
+            ]
+            
+            # 运行iopaint批量处理
+            logger.info(f"执行IOPaint批量命令: {' '.join(cmd)}")
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=timeout)
+            
+            # 检查输出目录是否有文件生成
+            output_files = [f for f in os.listdir(output_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+            if not output_files:
+                return False, "IOPaint批量处理未生成任何输出文件"
+            
+            logger.info(f"IOPaint批量处理成功，生成 {len(output_files)} 个文件")
+            return True, "批量处理成功"
+            
+        except subprocess.TimeoutExpired:
+            return False, f"IOPaint批量处理超时（{timeout}秒）"
+        except subprocess.CalledProcessError as e:
+            error_msg = e.stderr if e.stderr else e.stdout if e.stdout else "未知错误"
+            return False, f"IOPaint批量处理错误: {error_msg}"
+        except Exception as e:
+            return False, f"批量处理错误: {str(e)}"
     
     def process_single_image(self, image_path, output_dir, save_mask=True, remove_watermark=False, iopaint_model='lama'):
         """
