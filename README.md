@@ -104,7 +104,7 @@ python main.py repair
 python main.py repair --input data/train/watermarked --output data/result \
   --model models/checkpoints/checkpoint_epoch_030.pth \
   --iopaint-model lama \
-  --limit 100
+  --limit 100 --generate-video
 ```
 
 ## 3. 评估

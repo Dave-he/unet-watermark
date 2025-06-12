@@ -503,6 +503,13 @@ def main():
     repair_parser.add_argument('--limit', type=int, default=10,
                               help='随机选择的图片数量限制')
     
+    # 添加视频生成参数
+    repair_parser.add_argument('--generate-video', action='store_true', help='修复完成后自动生成对比视频')
+    repair_parser.add_argument('--video-width', type=int, default=1920, help='视频宽度 (默认: 1920)')
+    repair_parser.add_argument('--video-height', type=int, default=1080, help='视频高度 (默认: 1080)')
+    repair_parser.add_argument('--duration', type=float, default=2.0, help='每张图片展示时长(秒) (默认: 2.0)')
+    repair_parser.add_argument('--fps', type=int, default=30, help='视频帧率 (默认: 30)')
+    
     # 处理模式选择
     repair_parser.add_argument('--optimize', action='store_true', help='启用优化批处理模式')
     repair_parser.add_argument('--folder-mode', action='store_true', help='启用文件夹迭代处理模式')
