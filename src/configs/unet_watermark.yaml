@@ -15,10 +15,15 @@ DATA:
   ROOT_DIR: "./data/train"
   ADDITIONAL_ROOT_DIRS: []
   IMG_SIZE: 512
-  GENERATE_MASK_THRESHOLD: 20  # 降低阈值，提高透明水印检测敏感度
+  GENERATE_MASK_THRESHOLD: 15  # 降低阈值，提高透明水印检测敏感度
   TRAIN_RATIO: 0.8
   VAL_RATIO: 0.2
   SHUFFLE: True
+  # 数据增强策略: "basic", "enhanced", "transparent_watermark"
+  # transparent_watermark: 专门针对透明水印优化的增强策略，包含更强的亮度对比度变化、噪声模拟等
+  # enhanced: 增强版数据增强，适用于一般水印检测
+  # basic: 基础数据增强策略
+  AUGMENTATION_TYPE: "transparent_watermark"
   SEED: 42
   NUM_WORKERS: 8
   CACHE_IMAGES: true
@@ -27,15 +32,15 @@ DATA:
 # 训练配置
 TRAIN:
   BATCH_SIZE: 8  # 适当减小批次大小，提高训练稳定性
-  EPOCHS: 100     # 增加训练轮数
+  EPOCHS: 50     # 增加训练轮数
   LR: 0.00005
   WEIGHT_DECAY: 0.0001
   OUTPUT_DIR: "logs/output"
   MODEL_SAVE_PATH: "models/unet_watermark.pth"
   LOG_INTERVAL: 20
   SAVE_INTERVAL: 10
-  USE_EARLY_STOPPING: False  # 禁用早停
-  EARLY_STOPPING_PATIENCE: 20  # 如果启用早停，增加耐心值
+  USE_EARLY_STOPPING: True  # 禁用早停
+  EARLY_STOPPING_PATIENCE: 10  # 如果启用早停，增加耐心值
   USE_AMP: true
   GRADIENT_CLIP: 1.0
 

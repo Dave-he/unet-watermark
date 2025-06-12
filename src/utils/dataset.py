@@ -215,7 +215,7 @@ def get_transparent_watermark_transform(img_size=512):
         A.HorizontalFlip(p=0.5),
         A.VerticalFlip(p=0.2),
         A.RandomRotate90(p=0.3),
-        A.ShiftScaleRotate(shift_limit=0.1, scale_limit=0.1, rotate_limit=15, p=0.3),
+        A.Affine(scale=(0.9, 1.1), rotate=(-15, 15), shear=(-5, 5), p=0.3),
         
         # 针对透明水印的特殊增强
         A.RandomBrightnessContrast(
@@ -231,7 +231,7 @@ def get_transparent_watermark_transform(img_size=512):
         ),
         
         # 添加噪声，模拟真实环境
-        A.GaussNoise(var_limit=(10.0, 50.0), p=0.3),
+        A.GaussNoise(p=0.3),
         
         # 模糊效果，模拟图像质量问题
         A.OneOf([
@@ -240,7 +240,7 @@ def get_transparent_watermark_transform(img_size=512):
         ], p=0.2),
         
         # JPEG压缩，模拟实际使用场景
-        A.ImageCompression(quality_lower=60, quality_upper=100, p=0.3),
+        A.ImageCompression(quality_range=(60, 100), p=0.3),
         
         A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ToTensorV2(),
@@ -321,11 +321,24 @@ def create_datasets(cfg):
             clean_dirs.append(os.path.join(additional_root, "clean"))
             mask_dirs.append(os.path.join(additional_root, "masks"))
 
+    # 根据配置选择数据增强策略
+    augmentation_type = getattr(cfg.DATA, 'AUGMENTATION_TYPE', 'transparent_watermark')
+    
+    if augmentation_type == "transparent_watermark":
+        train_transform = get_transparent_watermark_transform(cfg.DATA.IMG_SIZE)
+        print(f"使用透明水印专用数据增强策略")
+    elif augmentation_type == "enhanced":
+        train_transform = get_enhanced_train_transform(cfg.DATA.IMG_SIZE)
+        print(f"使用增强版数据增强策略")
+    else:  # basic
+        train_transform = get_train_transform(cfg.DATA.IMG_SIZE)
+        print(f"使用基础数据增强策略")
+    
     full_dataset = WatermarkDataset(
         watermarked_dirs=watermarked_dirs,
         clean_dirs=clean_dirs,
         mask_dirs=mask_dirs,
-        transform=get_train_transform(cfg.DATA.IMG_SIZE),
+        transform=train_transform,
         mode='train',
         generate_mask_threshold=cfg.DATA.GENERATE_MASK_THRESHOLD
     )
@@ -346,12 +359,30 @@ def create_datasets(cfg):
     
     train_indices, val_indices = indices[:train_size], indices[train_size:]
     
-    # 创建训练集和验证集
-    train_dataset = Subset(full_dataset, train_indices)
-    val_dataset = Subset(full_dataset, val_indices)
+    # 创建训练集和验证集，使用不同的数据变换
+    # 训练集使用透明水印专用增强变换
+    train_dataset_full = WatermarkDataset(
+        watermarked_dirs=watermarked_dirs,
+        clean_dirs=clean_dirs,
+        mask_dirs=mask_dirs,
+        transform=train_transform,
+        mode='train',
+        generate_mask_threshold=cfg.DATA.GENERATE_MASK_THRESHOLD
+    )
     
-    # 为验证集设置验证变换
-    val_dataset.dataset.transform = get_val_transform(cfg.DATA.IMG_SIZE)
+    # 验证集使用标准验证变换
+    val_dataset_full = WatermarkDataset(
+        watermarked_dirs=watermarked_dirs,
+        clean_dirs=clean_dirs,
+        mask_dirs=mask_dirs,
+        transform=get_val_transform(cfg.DATA.IMG_SIZE),
+        mode='val',
+        generate_mask_threshold=cfg.DATA.GENERATE_MASK_THRESHOLD
+    )
+    
+    # 创建子集
+    train_dataset = Subset(train_dataset_full, train_indices)
+    val_dataset = Subset(val_dataset_full, val_indices)
     
     print(f"数据集划分完成:")
     print(f"训练集: {len(train_dataset)} 张图像")

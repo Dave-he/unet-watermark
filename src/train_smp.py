@@ -295,7 +295,7 @@ def train(cfg, resume_from=None):
     if resume_from and os.path.exists(resume_from):
         logger.info(f"从checkpoint恢复训练: {resume_from}")
         try:
-            checkpoint = torch.load(resume_from, map_location=device)
+            checkpoint = torch.load(resume_from, map_location=device, weights_only=False)
             
             # 加载模型状态
             if 'model_state_dict' in checkpoint:
@@ -362,6 +362,13 @@ def train(cfg, resume_from=None):
     
     # 优化检查点保存策略
     save_interval = max(5, cfg.TRAIN.EPOCHS // 10)  # 动态调整保存间隔
+    
+    # 初始化变量，避免作用域问题
+    epoch = start_epoch
+    val_loss = float('inf')
+    train_loss = 0.0
+    val_metrics_epoch = {'iou': 0.0, 'f1': 0.0, 'accuracy': 0.0, 'recall': 0.0, 'precision': 0.0}
+    train_metrics_epoch = {'iou': 0.0, 'f1': 0.0, 'accuracy': 0.0, 'recall': 0.0, 'precision': 0.0}
     
     for epoch in range(start_epoch, cfg.TRAIN.EPOCHS):
         logger.info(f"\nEpoch [{epoch+1}/{cfg.TRAIN.EPOCHS}]")

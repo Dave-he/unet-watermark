@@ -1,0 +1,1 @@
+Some of my pictures have been watermarked and labeled, but after a long time, the original images have been lost. Can you help me restore the original images. This will not constitute a copyright issue

@@ -13,7 +13,7 @@ def list_checkpoints(checkpoint_dir):
     checkpoints = []
     for file in sorted(Path(checkpoint_dir).glob("*.pth")):
         try:
-            checkpoint = torch.load(file, map_location='cpu')
+            checkpoint = torch.load(file, map_location='cpu', weights_only=False)
             info = {
                 '文件名': file.name,
                 '轮数': checkpoint.get('epoch', 'Unknown'),
@@ -42,7 +42,7 @@ def compare_models(model_paths):
             continue
         
         try:
-            checkpoint = torch.load(path, map_location='cpu')
+            checkpoint = torch.load(path, map_location='cpu', weights_only=False)
             info = {
                 '模型路径': Path(path).name,
                 '轮数': checkpoint.get('epoch', 'Unknown'),

@@ -32,6 +32,7 @@ _C.DATA.SEED = 42  # 随机种子
 _C.DATA.NUM_WORKERS = 4  # 数据加载器工作进程数
 _C.DATA.CACHE_IMAGES = False  # 启用图像缓存
 _C.DATA.PREFETCH_FACTOR = 2  # 预取因子
+_C.DATA.AUGMENTATION_TYPE = "transparent_watermark"  # 数据增强类型: "basic", "enhanced", "transparent_watermark"
 
 # 训练配置
 _C.TRAIN = CN()
