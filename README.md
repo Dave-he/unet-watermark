@@ -104,7 +104,7 @@ python main.py repair
 
 ## 3. 评估
 ```bash
-python src/scripts/model_selector.py --input data/test --model models --output data/select
+python src/scripts/model_selector.py --input data/train/watermarked --model models --output data/select
 
 
 python src/scripts/model_selector.py \

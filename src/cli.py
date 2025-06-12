@@ -75,6 +75,12 @@ def train_command(args):
     if args.lr:
         cfg.TRAIN.LR = args.lr
     
+    # 处理早停参数
+    if args.no_early_stopping:
+        cfg.TRAIN.USE_EARLY_STOPPING = False
+    if args.early_stopping_patience:
+        cfg.TRAIN.EARLY_STOPPING_PATIENCE = args.early_stopping_patience
+    
     # 设置设备
     device = setup_device(cfg.DEVICE)
     cfg.DEVICE = str(device)
@@ -95,6 +101,8 @@ def train_command(args):
     print(f"训练轮数: {cfg.TRAIN.EPOCHS}")
     print(f"学习率: {cfg.TRAIN.LR}")
     print(f"模型: {cfg.MODEL.NAME} + {cfg.MODEL.ENCODER_NAME}")
+    if getattr(args, 'resume', None):
+        print(f"恢复训练: {args.resume}")
     print()
     
     try:
@@ -102,8 +110,8 @@ def train_command(args):
         model = WatermarkSegmentationModel(cfg)
         print(f"模型信息: {model.get_model_info()}")
         
-        # 开始训练 - 只传递cfg参数
-        train(cfg)
+        # 开始训练 - 传递cfg和resume参数
+        train(cfg, resume_from=getattr(args, 'resume', None))
         
         print("\n训练完成！")
         print(f"最佳模型已保存到: {cfg.TRAIN.MODEL_SAVE_PATH}")
@@ -308,6 +316,10 @@ def main():
                              help='禁用早停机制')
     train_parser.add_argument('--early-stopping-patience', type=int,
                              help='早停耐心值（等待验证损失改善的轮数）')
+    
+    # 添加恢复训练参数
+    train_parser.add_argument('--resume', type=str,
+                             help='从指定的checkpoint文件恢复训练')
     
     # 预测命令
     predict_parser = subparsers.add_parser('predict', help='预测/推理')

@@ -194,8 +194,13 @@ def save_training_plots(train_losses, val_losses, train_metrics, val_metrics, ou
     plt.savefig(os.path.join(output_dir, 'training_curves.png'), dpi=300, bbox_inches='tight')
     plt.close()
 
-def train(cfg):
-    """训练函数"""
+def train(cfg, resume_from=None):
+    """训练函数
+    
+    Args:
+        cfg: 配置对象
+        resume_from: 要恢复的checkpoint路径，如果为None则从头开始训练
+    """
     # 创建输出目录
     os.makedirs(os.path.dirname(cfg.TRAIN.MODEL_SAVE_PATH), exist_ok=True)
     os.makedirs(cfg.TRAIN.OUTPUT_DIR, exist_ok=True)
@@ -278,6 +283,67 @@ def train(cfg):
     # 评估指标
     metrics = get_metrics()
     
+    # 初始化训练状态
+    start_epoch = 0
+    best_val_loss = float('inf')
+    train_losses = []
+    val_losses = []
+    train_metrics_history = []
+    val_metrics_history = []
+    
+    # 从checkpoint恢复训练
+    if resume_from and os.path.exists(resume_from):
+        logger.info(f"从checkpoint恢复训练: {resume_from}")
+        try:
+            checkpoint = torch.load(resume_from, map_location=device)
+            
+            # 加载模型状态
+            if 'model_state_dict' in checkpoint:
+                model.load_state_dict(checkpoint['model_state_dict'])
+                logger.info("成功加载模型权重")
+            else:
+                # 兼容旧格式的checkpoint
+                model.load_state_dict(checkpoint)
+                logger.info("成功加载模型权重（旧格式）")
+            
+            # 加载优化器状态
+            if 'optimizer_state_dict' in checkpoint:
+                optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                logger.info("成功加载优化器状态")
+            
+            # 加载调度器状态
+            if scheduler and 'scheduler_state_dict' in checkpoint and checkpoint['scheduler_state_dict']:
+                scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+                logger.info("成功加载调度器状态")
+            
+            # 恢复训练状态
+            if 'epoch' in checkpoint:
+                start_epoch = checkpoint['epoch']
+                logger.info(f"从第 {start_epoch} 轮继续训练")
+            
+            if 'best_val_loss' in checkpoint:
+                best_val_loss = checkpoint['best_val_loss']
+                logger.info(f"恢复最佳验证损失: {best_val_loss:.4f}")
+            
+            # 可选：恢复训练历史（如果checkpoint中包含）
+            if 'train_losses' in checkpoint:
+                train_losses = checkpoint['train_losses']
+            if 'val_losses' in checkpoint:
+                val_losses = checkpoint['val_losses']
+            if 'train_metrics_history' in checkpoint:
+                train_metrics_history = checkpoint['train_metrics_history']
+            if 'val_metrics_history' in checkpoint:
+                val_metrics_history = checkpoint['val_metrics_history']
+                
+        except Exception as e:
+            logger.error(f"加载checkpoint失败: {e}")
+            logger.info("将从头开始训练")
+            start_epoch = 0
+            best_val_loss = float('inf')
+    elif resume_from:
+        logger.warning(f"指定的checkpoint文件不存在: {resume_from}")
+        logger.info("将从头开始训练")
+    
     # 早停机制 - 根据配置决定是否启用
     early_stopping = None
     if cfg.TRAIN.USE_EARLY_STOPPING:
@@ -289,14 +355,6 @@ def train(cfg):
     else:
         logger.info("禁用早停机制，将训练完整的epoch数")
     
-    # 训练历史记录
-    train_losses = []
-    val_losses = []
-    train_metrics_history = []
-    val_metrics_history = []
-    
-    best_val_loss = float('inf')
-    
     logger.info(f"开始训练 {cfg.MODEL.NAME} 模型...")
     logger.info(f"训练集: {len(train_dataset)} 张图像")
     logger.info(f"验证集: {len(val_dataset)} 张图像")
@@ -305,7 +363,7 @@ def train(cfg):
     # 优化检查点保存策略
     save_interval = max(5, cfg.TRAIN.EPOCHS // 10)  # 动态调整保存间隔
     
-    for epoch in range(cfg.TRAIN.EPOCHS):
+    for epoch in range(start_epoch, cfg.TRAIN.EPOCHS):
         logger.info(f"\nEpoch [{epoch+1}/{cfg.TRAIN.EPOCHS}]")
         
         # 训练
@@ -370,7 +428,11 @@ def train(cfg):
                 'train_loss': train_loss,
                 'train_metrics': train_metrics_epoch,
                 'config': cfg,
-                'best_val_loss': best_val_loss
+                'best_val_loss': best_val_loss,
+                'train_losses': train_losses,
+                'val_losses': val_losses,
+                'train_metrics_history': train_metrics_history,
+                'val_metrics_history': val_metrics_history
             }
             torch.save(checkpoint_info, checkpoint_path)
             logger.info(f"保存检查点: {checkpoint_path} (Epoch: {epoch+1})")
@@ -458,6 +520,12 @@ def main():
         default=None,
         help='早停耐心值'
     )
+    parser.add_argument(
+        '--resume', 
+        type=str, 
+        default=None,
+        help='从指定的checkpoint文件恢复训练'
+    )
     
     args = parser.parse_args()
     
@@ -483,7 +551,7 @@ def main():
         cfg.TRAIN.EARLY_STOPPING_PATIENCE = args.early_stopping_patience
     
     # 开始训练
-    train(cfg)
+    train(cfg, resume_from=args.resume)
 
 if __name__ == "__main__":
     main()

@@ -391,7 +391,7 @@ def main():
     # 运行评估
     results = selector.run_evaluation()
     
-    logger.info(f"模型评估完成！{result}")
+    logger.info(f"模型评估完成！")
 
 
 if __name__ == '__main__':
