@@ -280,7 +280,8 @@ class WatermarkPredictor:
                     'completed': False,
                     'iterations': 0,
                     'final_watermark_ratio': 0.0,
-                    'detection_model': None
+                    'detection_model': None,
+                    'accumulated_mask': None  # 累积的mask
                 }
             
             # 开始迭代处理
@@ -357,9 +358,17 @@ class WatermarkPredictor:
                 info['final_watermark_ratio'] = watermark_ratio
                 info['detection_model'] = model_used
                 
-                # 保存最终mask
+                # 累积mask：将当前mask的白色区域与之前的mask合并
+                if info['accumulated_mask'] is None:
+                    # 第一次迭代，直接使用当前mask
+                    info['accumulated_mask'] = mask.copy()
+                else:
+                    # 合并当前mask和累积mask的白色区域
+                    info['accumulated_mask'] = cv2.bitwise_or(info['accumulated_mask'], mask)
+                
+                # 保存累积的最终mask
                 final_mask_path = os.path.join(temp_dir, f"{image_name}_final_mask.png")
-                cv2.imwrite(final_mask_path, mask)
+                cv2.imwrite(final_mask_path, info['accumulated_mask'])
                 info['final_mask_path'] = final_mask_path
                 
                 # 检查是否需要修复
