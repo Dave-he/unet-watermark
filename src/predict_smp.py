@@ -9,6 +9,7 @@ import tempfile
 import argparse
 import logging
 from pathlib import Path
+import shutil
 
 # 导入自定义模块
 from configs.config import get_cfg_defaults, update_config
@@ -207,6 +208,301 @@ class WatermarkPredictor:
         logger.info("=" * 50)
 
     
+    def process_folder_iterative(self, input_folder, output_folder, max_iterations=5,
+                            watermark_threshold=0.01, iopaint_model='lama'):
+        """
+        分阶段批量处理文件夹中的图片
+        
+        Args:
+            input_folder (str): 输入文件夹路径
+            output_folder (str): 输出文件夹路径
+            max_iterations (int): 最大迭代次数
+            watermark_threshold (float): 水印面积阈值
+            iopaint_model (str): iopaint模型名称
+            
+        Returns:
+            dict: 处理结果统计
+        """
+        import shutil
+        import tempfile
+        from pathlib import Path
+        
+        # 创建输出目录和临时工作目录
+        os.makedirs(output_folder, exist_ok=True)
+        temp_dir = tempfile.mkdtemp(prefix="watermark_removal_")
+        
+        try:
+            # 获取所有图片文件
+            image_files = []
+            for ext in ['*.jpg', '*.jpeg', '*.png', '*.bmp']:
+                image_files.extend(Path(input_folder).glob(ext))
+                image_files.extend(Path(input_folder).glob(ext.upper()))
+            
+            if not image_files:
+                logger.warning(f"在 {input_folder} 中未找到图像文件")
+                return {'status': 'error', 'message': '未找到图像文件'}
+            
+            logger.info(f"开始处理 {len(image_files)} 张图片")
+            
+            # 初始化图片状态
+            image_status = {}
+            for img_path in image_files:
+                stem = img_path.stem
+                current_path = os.path.join(temp_dir, f"{stem}_current.png")
+                shutil.copy2(str(img_path), current_path)
+                
+                image_status[stem] = {
+                    'original_path': str(img_path),
+                    'current_path': current_path,
+                    'completed': False,
+                    'iterations': 0,
+                    'final_watermark_ratio': 0.0,
+                    'detection_model': None
+                }
+            
+            # 开始迭代处理
+            for iteration in range(1, max_iterations + 1):
+                logger.info(f"开始第 {iteration}/{max_iterations} 轮处理")
+                
+                # 第一阶段：批量掩码预测
+                masks_generated = self._stage1_batch_mask_prediction(
+                    image_status, temp_dir, iteration, watermark_threshold
+                )
+                
+                if not masks_generated:
+                    logger.info("所有图片都已完成处理")
+                    break
+                
+                # 第二阶段：批量修复
+                self._stage2_batch_repair(
+                    image_status, temp_dir, iteration, iopaint_model
+                )
+                
+                # 检查完成状态
+                completed_count = sum(1 for info in image_status.values() if info['completed'])
+                logger.info(f"第 {iteration} 轮完成，已完成: {completed_count}/{len(image_files)}")
+                
+                if completed_count == len(image_files):
+                    break
+            
+            # 复制最终结果到输出目录
+            self._copy_final_results(image_status, output_folder)
+            
+            # 生成统计结果
+            return self._generate_statistics(image_status, watermark_threshold)
+            
+        finally:
+            # 清理临时目录
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def _stage1_batch_mask_prediction(self, image_status, temp_dir, iteration, watermark_threshold):
+        """
+        第一阶段：批量掩码预测
+        
+        Args:
+            image_status (dict): 图片状态字典
+            temp_dir (str): 临时目录
+            iteration (int): 当前迭代次数
+            watermark_threshold (float): 水印阈值
+            
+        Returns:
+            bool: 是否生成了掩码
+        """
+        logger.info("第一阶段：批量掩码预测")
+        
+        masks_generated = False
+        pending_images = [(name, info) for name, info in image_status.items() 
+                         if not info['completed']]
+        
+        if not pending_images:
+            return False
+        
+        # 使用进度条显示预测进度
+        progress_bar = tqdm(pending_images, desc="预测掩码", unit="张")
+        
+        for image_name, info in progress_bar:
+            progress_bar.set_postfix({'当前': image_name[:15] + '...'})
+            
+            try:
+                # 使用多模型检测策略
+                mask, model_used, watermark_detected = self.predict_mask_with_model_switching(
+                    info['current_path'], min_watermark_threshold=0.001
+                )
+                
+                # 计算水印比例
+                image = cv2.imread(info['current_path'])
+                total_pixels = image.shape[0] * image.shape[1]
+                watermark_pixels = np.sum(mask > 0)
+                watermark_ratio = watermark_pixels / total_pixels
+                
+                info['final_watermark_ratio'] = watermark_ratio
+                info['detection_model'] = model_used
+                
+                # 保存最终mask（用于视频生成）
+                final_mask_path = os.path.join(temp_dir, f"{image_name}_final_mask.png")
+                cv2.imwrite(final_mask_path, mask)
+                info['final_mask_path'] = final_mask_path
+                
+                # 检查是否需要修复
+                if not watermark_detected or watermark_ratio < watermark_threshold:
+                    logger.info(f"{image_name}: 无需修复 (水印比例: {watermark_ratio:.6f})")
+                    info['completed'] = True
+                    info['iterations'] = iteration - 1
+                    continue
+                
+                # 保存当前迭代的掩码
+                mask_path = os.path.join(temp_dir, f"{image_name}_mask_iter{iteration}.png")
+                cv2.imwrite(mask_path, mask)
+                info['mask_path'] = mask_path
+                
+                logger.info(f"{image_name}: 检测到水印 {watermark_ratio:.6f} (模型: {model_used})")
+                masks_generated = True
+                
+            except Exception as e:
+                logger.error(f"{image_name}: 掩码预测失败: {str(e)}")
+                info['completed'] = True
+                info['iterations'] = iteration
+        
+        return masks_generated
+
+    def _stage2_batch_repair(self, image_status, temp_dir, iteration, iopaint_model):
+        """
+        第二阶段：批量修复
+        
+        Args:
+            image_status (dict): 图片状态字典
+            temp_dir (str): 临时目录
+            iteration (int): 当前迭代次数
+            iopaint_model (str): iopaint模型名称
+        """
+        logger.info("第二阶段：批量修复")
+        
+        # 收集需要修复的图片
+        repair_tasks = []
+        for image_name, info in image_status.items():
+            if not info['completed'] and 'mask_path' in info:
+                repair_tasks.append((image_name, info))
+        
+        if not repair_tasks:
+            logger.info("没有需要修复的图片")
+            return
+        
+        # 批量修复
+        progress_bar = tqdm(repair_tasks, desc="批量修复", unit="张")
+        
+        for image_name, info in progress_bar:
+            progress_bar.set_postfix({'当前': image_name[:15] + '...'})
+            
+            try:
+                # 生成输出路径
+                output_path = os.path.join(temp_dir, f"{image_name}_iter{iteration}.png")
+                
+                # 使用iopaint修复
+                success, message = self.remove_watermark_with_iopaint(
+                    info['current_path'], 
+                    cv2.imread(info['mask_path'], cv2.IMREAD_GRAYSCALE),
+                    output_path, 
+                    iopaint_model
+                )
+                
+                if success:
+                    info['current_path'] = output_path
+                    info['iterations'] = iteration
+                    logger.info(f"{image_name}: 修复完成")
+                else:
+                    logger.error(f"{image_name}: 修复失败: {message}")
+                    info['completed'] = True
+                    info['iterations'] = iteration
+                
+                # 清理掩码文件
+                if 'mask_path' in info:
+                    try:
+                        os.remove(info['mask_path'])
+                    except:
+                        pass
+                    del info['mask_path']
+                    
+            except Exception as e:
+                logger.error(f"{image_name}: 修复过程出错: {str(e)}")
+                info['completed'] = True
+                info['iterations'] = iteration
+
+    def _copy_final_results(self, image_status, output_folder):
+        """
+        复制最终结果到输出目录
+        
+        Args:
+            image_status (dict): 图片状态字典
+            output_folder (str): 输出文件夹
+        """
+        logger.info("复制最终结果到输出目录")
+        
+        # 创建mask子目录
+        mask_output_dir = os.path.join(output_folder, 'masks')
+        os.makedirs(mask_output_dir, exist_ok=True)
+        
+        for image_name, info in image_status.items():
+            try:
+                # 确定输出文件名
+                if info['completed'] and info['final_watermark_ratio'] < 0.01:
+                    output_filename = f"{image_name}_cleaned.png"
+                else:
+                    output_filename = f"{image_name}_partial.png"
+                
+                output_path = os.path.join(output_folder, output_filename)
+                shutil.copy2(info['current_path'], output_path)
+                
+                # 保存最终的mask图片（如果存在）
+                if 'final_mask_path' in info and os.path.exists(info['final_mask_path']):
+                    mask_filename = f"{image_name}_mask.png"
+                    mask_output_path = os.path.join(mask_output_dir, mask_filename)
+                    shutil.copy2(info['final_mask_path'], mask_output_path)
+                    logger.info(f"{image_name}: mask已保存到 {mask_filename}")
+                
+                logger.info(f"{image_name}: 已保存到 {output_filename}")
+                
+            except Exception as e:
+                logger.error(f"{image_name}: 复制结果失败: {str(e)}")
+
+    def _generate_statistics(self, image_status, watermark_threshold):
+        """
+        生成处理统计信息
+        
+        Args:
+            image_status (dict): 图片状态字典
+            watermark_threshold (float): 水印阈值
+            
+        Returns:
+            dict: 统计信息
+        """
+        total_images = len(image_status)
+        successful = sum(1 for info in image_status.values() 
+                        if info['completed'] and info['final_watermark_ratio'] < watermark_threshold)
+        partial = total_images - successful
+        
+        avg_iterations = np.mean([info['iterations'] for info in image_status.values()])
+        
+        # 模型使用统计
+        model_usage = {}
+        for info in image_status.values():
+            if info['detection_model']:
+                model_usage[info['detection_model']] = model_usage.get(info['detection_model'], 0) + 1
+        
+        statistics = {
+            'status': 'completed',
+            'total_images': total_images,
+            'successful': successful,
+            'partial': partial,
+            'success_rate': successful / total_images * 100,
+            'average_iterations': round(avg_iterations, 2),
+            'model_usage': model_usage
+        }
+        
+        logger.info(f"处理完成: {successful}/{total_images} 成功, 平均迭代 {avg_iterations:.2f} 次")
+        logger.info(f"模型使用统计: {model_usage}")
+        
+        return statistics
+
     def process_batch_iterative(self, input_path, output_dir, max_iterations=5,
                                watermark_threshold=0.01, iopaint_model='lama', limit=None):
         """

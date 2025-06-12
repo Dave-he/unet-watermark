@@ -151,7 +151,6 @@ def predict_command(args):
     print(f"输入路径: {args.input}")
     print(f"输出路径: {args.output}")
     print(f"模型路径: {args.model}")
-    print(f"批次大小: {args.batch_size or 8}")
     print(f"阈值: {args.threshold or 0.5}")
     print()
     
@@ -172,20 +171,38 @@ def predict_command(args):
         if args.threshold is not None:
             predictor.cfg.PREDICT.THRESHOLD = args.threshold
         
-        # 执行预测
-        results = predictor.process_batch(
-            input_path=args.input,
-            output_dir=args.output,
-            save_mask=args.save_mask or False,
-            remove_watermark=args.save_overlay or False,
-            iopaint_model=getattr(args, 'iopaint_model', 'lama'),
-            limit=args.limit
-        )
-        
-        print("\n预测完成！")
-        print(f"处理图像数量: {len(results)}")
-        print(f"成功: {sum(1 for r in results if r['status'] == 'success')}")
-        print(f"失败: {sum(1 for r in results if r['status'] == 'failed')}")
+        # 检查是否使用文件夹迭代模式
+        if getattr(args, 'folder_mode', False) and os.path.isdir(args.input):
+            # 使用新的文件夹迭代处理方法
+            results = predictor.process_folder_iterative(
+                input_folder=args.input,
+                output_folder=args.output,
+                max_iterations=getattr(args, 'max_iterations', 5),
+                watermark_threshold=getattr(args, 'watermark_threshold', 0.01),
+                iopaint_model=getattr(args, 'iopaint_model', 'lama')
+            )
+            
+            print("\n文件夹迭代处理完成！")
+            print(f"总图片数: {results.get('total_images', 0)}")
+            print(f"成功处理: {results.get('successful', 0)}")
+            print(f"部分处理: {results.get('partial', 0)}")
+            print(f"成功率: {results.get('success_rate', 0):.1f}%")
+            print(f"平均迭代次数: {results.get('average_iterations', 0)}")
+        else:
+            # 使用原有的批处理方法
+            results = predictor.process_batch(
+                input_path=args.input,
+                output_dir=args.output,
+                save_mask=args.save_mask or False,
+                remove_watermark=args.save_overlay or False,
+                iopaint_model=getattr(args, 'iopaint_model', 'lama'),
+                limit=args.limit
+            )
+            
+            print("\n预测完成！")
+            print(f"处理图像数量: {len(results)}")
+            print(f"成功: {sum(1 for r in results if r['status'] == 'success')}")
+            print(f"失败: {sum(1 for r in results if r['status'] == 'failed')}")
         
     except Exception as e:
         print(f"预测过程中出现错误: {str(e)}")
@@ -219,6 +236,7 @@ def repair_command(args):
     
     # 检查是否使用优化模式
     use_optimizer = getattr(args, 'optimize', False)
+    use_folder_mode = getattr(args, 'folder_mode', False)
     
     if use_optimizer:
         print("使用优化批处理模式...")
@@ -242,7 +260,7 @@ def repair_command(args):
                 input_path=args.input,
                 output_dir=args.output,
                 max_iterations=getattr(args, 'max_iterations', 5),
-                watermark_threshold=getattr(args, 'threshold', 0.01),
+                watermark_threshold=getattr(args, 'watermark_threshold', 0.01),
                 iopaint_model=getattr(args, 'iopaint_model', 'lama'),
                 limit=getattr(args, 'limit', None),
                 batch_size=getattr(args, 'batch_size', 10),
@@ -267,6 +285,41 @@ def repair_command(args):
         # 保存结果摘要
         summary_path = os.path.join(args.output, 'optimized_repair_summary.json')
         
+    elif use_folder_mode and os.path.isdir(args.input):
+        print("使用文件夹迭代处理模式...")
+        
+        # 加载配置
+        config_path = getattr(args, 'config', None)
+        if config_path and not os.path.exists(config_path):
+            print(f"警告: 配置文件不存在: {config_path}，使用默认配置")
+            config_path = None
+        
+        # 创建预测器
+        predictor = WatermarkPredictor(
+            model_path=args.model,
+            config_path=config_path,
+            device=device
+        )
+        
+        # 使用新的文件夹迭代处理方法
+        results = predictor.process_folder_iterative(
+            input_folder=args.input,
+            output_folder=args.output,
+            max_iterations=getattr(args, 'max_iterations', 5),
+            watermark_threshold=getattr(args, 'watermark_threshold', 0.01),
+            iopaint_model=getattr(args, 'iopaint_model', 'lama')
+        )
+        
+        print("\n文件夹迭代修复完成！")
+        print(f"总图片数: {results.get('total_images', 0)}")
+        print(f"成功处理: {results.get('successful', 0)}")
+        print(f"部分处理: {results.get('partial', 0)}")
+        print(f"成功率: {results.get('success_rate', 0):.1f}%")
+        print(f"平均迭代次数: {results.get('average_iterations', 0)}")
+        
+        # 保存结果摘要
+        summary_path = os.path.join(args.output, 'folder_repair_summary.json')
+        
     else:
         print("使用标准处理模式...")
         
@@ -284,15 +337,15 @@ def repair_command(args):
         )
         
         # 覆盖阈值（如果指定）
-        if hasattr(args, 'threshold') and args.threshold is not None:
-            predictor.watermark_threshold = args.threshold
+        if hasattr(args, 'watermark_threshold') and args.watermark_threshold is not None:
+            predictor.watermark_threshold = args.watermark_threshold
         
         # 执行修复
         results = predictor.process_batch_iterative(
             input_path=args.input,
             output_dir=args.output,
             max_iterations=getattr(args, 'max_iterations', 10),
-            watermark_threshold=getattr(args, 'threshold', 1e-6),
+            watermark_threshold=getattr(args, 'watermark_threshold', 1e-6),
             iopaint_model=getattr(args, 'iopaint_model', 'lama'),
             limit=getattr(args, 'limit', None)
         )
@@ -306,6 +359,40 @@ def repair_command(args):
         json.dump(results, f, indent=2, ensure_ascii=False)
     
     print(f"\n修复完成！结果摘要已保存: {summary_path}")
+    
+    # 检查是否需要生成视频
+    if getattr(args, 'generate_video', False):
+        print("开始生成对比视频...")
+        try:
+            from scripts.video_generator import VideoGenerator
+            
+            # 检查mask目录
+            mask_dir = os.path.join(args.output, 'masks')
+            if not os.path.exists(mask_dir):
+                mask_dir = None
+            
+            # 创建视频生成器
+            generator = VideoGenerator(
+                input_dir=args.input,
+                repair_dir=args.output,
+                output_dir=args.output,
+                mask_dir=mask_dir,
+                width=getattr(args, 'video_width', 1920),
+                height=getattr(args, 'video_height', 1080),
+                duration_per_image=getattr(args, 'duration', 2.0),
+                fps=getattr(args, 'fps', 30)
+            )
+            
+            # 根据是否有mask选择视频类型
+            if mask_dir:
+                video_path = generator.create_three_way_comparison_video()
+                print(f"三路对比视频已生成: {video_path}")
+            else:
+                video_path = generator.create_side_by_side_video()
+                print(f"并排对比视频已生成: {video_path}")
+                
+        except Exception as e:
+            print(f"视频生成失败: {str(e)}")
     
     # 记录最终内存状态
     if device == 'cuda':
@@ -371,10 +458,8 @@ def main():
     predict_parser.add_argument('--config', type=str, help='配置文件路径')
     predict_parser.add_argument('--device', type=str, 
                                default='auto', help='计算设备 (默认: auto)')
-    predict_parser.add_argument('--batch-size', type=int, default=8, 
-                               help='批次大小 (默认: 8)')
     predict_parser.add_argument('--threshold', type=float, default=0.3, 
-                               help='二值化阈值 (默认: 0.5)')
+                               help='二值化阈值 (默认: 0.3)')
     predict_parser.add_argument('--save-mask', action='store_true', default=True,
                                help='保存预测掩码')
     predict_parser.add_argument('--save-overlay', action='store_true', 
@@ -384,34 +469,43 @@ def main():
     predict_parser.add_argument('--iopaint-model', type=str, default='lama',
                                help='IOPaint修复模型 (默认: lama)')
     
+    # 新增文件夹迭代模式参数
+    predict_parser.add_argument('--folder-mode', action='store_true',
+                               help='启用文件夹迭代处理模式')
+    predict_parser.add_argument('--max-iterations', type=int, default=5,
+                               help='最大迭代次数 (文件夹模式, 默认: 5)')
+    predict_parser.add_argument('--watermark-threshold', type=float, default=0.01,
+                               help='水印面积阈值 (文件夹模式, 默认: 0.01)')
+    
     # 循环修复命令
     repair_parser = subparsers.add_parser('repair', help='循环检测和修复水印')
     repair_parser.add_argument('--input', type=str, default='/Users/hyx/Pictures/image',
                               help='输入图像路径或目录')
     repair_parser.add_argument('--output', type=str, default='data/result',
                               help='输出目录')
-    repair_parser.add_argument('--model', type=str, default='models/checkpoint_epoch_080.pth',
+    repair_parser.add_argument('--model', type=str, default='models/checkpoint_epoch_020.pth',
                               help='模型文件路径')
     repair_parser.add_argument('--config', type=str, help='配置文件路径')
     repair_parser.add_argument('--device', type=str, 
                               default='auto', help='计算设备 (默认: auto)')
     repair_parser.add_argument('--threshold', type=float, default=0.3, 
-                              help='二值化阈值 (默认: 0.5)')
+                              help='二值化阈值 (默认: 0.3)')
     repair_parser.add_argument('--max-iterations', type=int, default=10,
                               help='最大迭代次数 (默认: 10)')
-    repair_parser.add_argument('--save-mask', action='store_true', default=True,
+    repair_parser.add_argument('--save-mask', default=True,
                             help='保存预测掩码')
-    repair_parser.add_argument('--watermark-threshold', type=float, default=0.000001,
-                              help='水印面积阈值，低于此值认为修复完成 (默认: 0.000001)')
-    repair_parser.add_argument('--min-detection-threshold', type=float, default=0.01,
-                              help='最小检测阈值，低于此值认为模型未检测到水印 (默认: 0.01)')
+    repair_parser.add_argument('--watermark-threshold', type=float, default=0.01,
+                              help='水印面积阈值，低于此值认为修复完成 (默认: 0.01)')
+    repair_parser.add_argument('--min-detection-threshold', type=float, default=0.001,
+                              help='最小检测阈值，低于此值认为模型未检测到水印 (默认: 0.001)')
     repair_parser.add_argument('--iopaint-model', type=str, default='lama',
                               help='IOPaint修复模型 (默认: lama)')
     repair_parser.add_argument('--limit', type=int, default=10,
                               help='随机选择的图片数量限制')
     
-    # 优化相关参数
+    # 处理模式选择
     repair_parser.add_argument('--optimize', action='store_true', help='启用优化批处理模式')
+    repair_parser.add_argument('--folder-mode', action='store_true', help='启用文件夹迭代处理模式')
     repair_parser.add_argument('--batch-size', type=int, default=10, help='批处理大小（优化模式）')
     repair_parser.add_argument('--pause-interval', type=int, default=50, help='暂停清理间隔（优化模式）')
     

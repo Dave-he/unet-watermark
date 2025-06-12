@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 class VideoGenerator:
     """视频生成器类"""
     
-    def __init__(self, input_dir, repair_dir, output_dir, width=640, height=480, 
+    def __init__(self, input_dir, repair_dir, output_dir, mask_dir=None, width=640, height=480, 
                  duration_per_image=2.0, fps=30):
         """
         初始化视频生成器
@@ -34,6 +34,7 @@ class VideoGenerator:
             input_dir (str): 原图目录
             repair_dir (str): 修复图目录
             output_dir (str): 输出目录
+            mask_dir (str, optional): mask图目录
             width (int): 视频宽度
             height (int): 视频高度
             duration_per_image (float): 每张图片展示时长(秒)
@@ -42,6 +43,7 @@ class VideoGenerator:
         self.input_dir = input_dir
         self.repair_dir = repair_dir
         self.output_dir = output_dir
+        self.mask_dir = mask_dir
         self.width = width
         self.height = height
         self.duration_per_image = duration_per_image
@@ -53,15 +55,17 @@ class VideoGenerator:
         logger.info(f"视频生成器初始化完成")
         logger.info(f"视频尺寸: {width}x{height}, 帧率: {fps}fps")
         logger.info(f"每张图片展示时长: {duration_per_image}秒")
+        if mask_dir:
+            logger.info(f"包含mask图片: {mask_dir}")
     
-    def find_image_pairs(self):
+    def find_image_triplets(self):
         """
-        查找原图和修复图的配对
+        查找原图、修复图和mask图的三元组配对
         
         Returns:
-            list: 配对的图片路径列表 [(original_path, repaired_path), ...]
+            list: 配对的图片路径列表 [(original_path, repaired_path, mask_path), ...]
         """
-        pairs = []
+        triplets = []
         
         # 获取修复图目录中的所有图片
         repair_files = {}
@@ -76,21 +80,33 @@ class VideoGenerator:
                 clean_name = base_name.replace('_cleaned', '').replace('_repaired', '').replace('_fixed', '').replace('_partial_cleaned', '')
                 repair_files[clean_name] = str(file_path)
         
+        # 获取mask图目录中的所有图片（如果提供）
+        mask_files = {}
+        if self.mask_dir and os.path.exists(self.mask_dir):
+            mask_file_list = list(Path(self.mask_dir).iterdir())
+            for file_path in tqdm(mask_file_list, desc="扫描mask图", unit="个"):
+                if file_path.suffix.lower() in self.image_extensions:
+                    base_name = file_path.stem
+                    # 移除可能的后缀
+                    clean_name = base_name.replace('_mask', '').replace('_final_mask', '')
+                    mask_files[clean_name] = str(file_path)
+        
         # 在原图目录中查找对应的原图
         input_file_list = list(Path(self.input_dir).iterdir())
         
         # 添加进度条显示原图匹配过程
-        for file_path in tqdm(input_file_list, desc="匹配原图", unit="个"):
+        for file_path in tqdm(input_file_list, desc="匹配图片组", unit="个"):
             if file_path.suffix.lower() in self.image_extensions:
                 base_name = file_path.stem
                 
                 # 尝试匹配修复图
                 if base_name in repair_files:
-                    pairs.append((str(file_path), repair_files[base_name]))
-                    logger.debug(f"找到配对: {file_path.name} <-> {Path(repair_files[base_name]).name}")
+                    mask_path = mask_files.get(base_name, None)
+                    triplets.append((str(file_path), repair_files[base_name], mask_path))
+                    logger.debug(f"找到配对: {file_path.name} <-> {Path(repair_files[base_name]).name} <-> {Path(mask_path).name if mask_path else 'None'}")
         
-        logger.info(f"共找到 {len(pairs)} 对图片")
-        return pairs
+        logger.info(f"共找到 {len(triplets)} 组图片")
+        return triplets
     
     def resize_image_with_padding(self, image_path, target_width, target_height):
         """
@@ -436,6 +452,149 @@ class VideoGenerator:
         
         return video_path
 
+    def create_three_way_comparison_video(self):
+        """
+        创建三路对比视频（原图、修复图、mask图）
+        
+        Returns:
+            str: 生成的视频文件路径
+        """
+        # 查找图片三元组
+        image_triplets = self.find_image_triplets()
+        
+        if not image_triplets:
+            raise ValueError("未找到任何图片配对")
+        
+        # 准备视频帧序列
+        all_frames = []
+        
+        # 计算单张图片的尺寸（三等分宽度）
+        single_width = self.width // 3
+        single_height = self.height
+        
+        # 添加总体进度条
+        triplet_progress = tqdm(image_triplets, desc="处理三路对比", unit="组")
+        
+        for i, (original_path, repaired_path, mask_path) in enumerate(triplet_progress):
+            # 更新进度条描述
+            triplet_progress.set_postfix({
+                '当前': Path(original_path).name[:15] + '...' if len(Path(original_path).name) > 15 else Path(original_path).name,
+                '模式': '三路对比'
+            })
+            
+            try:
+                # 处理原图
+                original_frame = self.resize_image_with_padding(original_path, single_width, single_height)
+                original_frame = self.add_text_overlay(original_frame, "Original", 'top')
+                
+                # 处理修复图
+                repaired_frame = self.resize_image_with_padding(repaired_path, single_width, single_height)
+                repaired_frame = self.add_text_overlay(repaired_frame, "Repaired", 'top')
+                
+                # 处理mask图
+                if mask_path and os.path.exists(mask_path):
+                    # 读取mask并转换为彩色图像
+                    mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+                    mask_colored = cv2.applyColorMap(mask, cv2.COLORMAP_HOT)  # 使用热力图颜色
+                    
+                    # 保存为临时文件以便resize_image_with_padding处理
+                    temp_mask_path = os.path.join(self.output_dir, "temp_mask.png")
+                    cv2.imwrite(temp_mask_path, mask_colored)
+                    
+                    mask_frame = self.resize_image_with_padding(temp_mask_path, single_width, single_height)
+                    mask_frame = self.add_text_overlay(mask_frame, "Mask", 'top')
+                    
+                    # 清理临时文件
+                    os.remove(temp_mask_path)
+                else:
+                    # 如果没有mask，创建黑色占位图
+                    mask_frame = np.zeros((single_height, single_width, 3), dtype=np.uint8)
+                    mask_frame = self.add_text_overlay(mask_frame, "No Mask", 'top')
+                
+                # 合并三张图片
+                combined_frame = np.hstack([original_frame, repaired_frame, mask_frame])
+                
+                # 添加图片名称标签
+                combined_frame = self.add_text_overlay(
+                    combined_frame, 
+                    f"{Path(original_path).name}", 
+                    'bottom'
+                )
+                
+                # 计算每张图片需要的帧数
+                frames_per_image = int(self.duration_per_image * self.fps)
+                
+                # 添加帧
+                for _ in range(frames_per_image):
+                    all_frames.append(combined_frame)
+                
+            except Exception as e:
+                logger.error(f"处理图片组失败 {original_path} <-> {repaired_path} <-> {mask_path}: {str(e)}")
+                continue
+        
+        triplet_progress.close()
+        
+        if not all_frames:
+            raise ValueError("没有成功处理任何图片组")
+        
+        logger.info(f"准备生成三路对比视频，总帧数: {len(all_frames)}")
+        
+        # 生成视频文件名
+        video_filename = f"watermark_threeway_{len(image_triplets)}groups.mp4"
+        video_path = os.path.join(self.output_dir, video_filename)
+        
+        # 创建临时图片序列目录
+        temp_dir = os.path.join(self.output_dir, "temp_frames_threeway")
+        os.makedirs(temp_dir, exist_ok=True)
+        
+        try:
+            # 保存所有帧为临时图片（添加进度条）
+            frame_paths = []
+            frame_progress = tqdm(all_frames, desc="保存三路帧", unit="帧")
+            
+            for i, frame in enumerate(frame_progress):
+                frame_path = os.path.join(temp_dir, f"frame_{i:06d}.png")
+                cv2.imwrite(frame_path, frame)
+                frame_paths.append(frame_path)
+                
+                # 更新进度条信息
+                if i % 50 == 0:  # 每50帧更新一次显示
+                    frame_progress.set_postfix({
+                        '已保存': f"{i+1}/{len(all_frames)}"
+                    })
+            
+            frame_progress.close()
+            
+            # 使用moviepy创建视频
+            logger.info("开始生成三路对比视频...")
+            
+            # 创建视频进度条
+            video_progress = tqdm(total=len(frame_paths), desc="生成三路视频", unit="帧")
+            
+            try:
+                clip = ImageSequenceClip(frame_paths, fps=self.fps)
+                clip.write_videofile(
+                    video_path,
+                    codec='libx264',
+                    audio=False,
+                    logger=None
+                )
+            finally:
+                video_progress.close()
+            
+            logger.info(f"三路对比视频生成完成: {video_path}")
+            
+        finally:
+            # 清理临时文件
+            import shutil
+            if os.path.exists(temp_dir):
+                cleanup_progress = tqdm(desc="清理临时文件", total=1, unit="目录")
+                shutil.rmtree(temp_dir)
+                cleanup_progress.update(1)
+                cleanup_progress.close()
+                logger.info("临时文件已清理")
+        
+        return video_path
 
 def main():
     """主函数 - 命令行入口"""
@@ -542,3 +701,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
