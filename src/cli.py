@@ -349,7 +349,7 @@ def main():
                               help='输入图像路径或目录')
     repair_parser.add_argument('--output', type=str, default='data/result',
                               help='输出目录')
-    repair_parser.add_argument('--model', type=str, default='models/epoch_300.pth',
+    repair_parser.add_argument('--model', type=str, default='models/checkpoint_epoch_080.pth',
                               help='模型文件路径')
     repair_parser.add_argument('--config', type=str, help='配置文件路径')
     repair_parser.add_argument('--device', type=str, 
