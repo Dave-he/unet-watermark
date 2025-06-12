@@ -133,15 +133,6 @@ class VideoGenerator:
         
         return result
     
-
-    
-    # Set proper encoding
-    if sys.platform.startswith('win'):
-        locale.setlocale(locale.LC_ALL, 'Chinese (Simplified)_China.936')
-    else:
-        locale.setlocale(locale.LC_ALL, 'zh_CN.UTF-8')
-    
-    # In the add_text_overlay method, ensure text is properly encoded
     def add_text_overlay(self, image, text, position='top'):
         """
         在图片上添加文字标签
