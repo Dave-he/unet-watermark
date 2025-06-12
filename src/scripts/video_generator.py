@@ -466,7 +466,7 @@ def main():
     
     # 可选参数
     parser.add_argument('--mode', '-m', type=str, choices=['switch', 'sidebyside'], 
-                       default='switch', help='视频模式：switch(切换对比) 或 sidebyside(并排对比) (默认: switch)')
+                       default='sidebyside', help='视频模式：switch(切换对比) 或 sidebyside(并排对比) (默认: switch)')
     parser.add_argument('--width', '-w', type=int, default=640,
                        help='视频宽度 (默认: 640)')
     parser.add_argument('--height', type=int, default=480,
