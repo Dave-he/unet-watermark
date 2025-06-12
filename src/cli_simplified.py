@@ -137,10 +137,10 @@ def main():
     parser.add_argument('--config', type=str, help='配置文件路径')
     parser.add_argument('--device', type=str, default='auto',
                        help='计算设备 (默认: auto)')
-    parser.add_argument('--max-iterations', type=int, default=5,
-                       help='最大迭代次数 (默认: 5)')
-    parser.add_argument('--watermark-threshold', type=float, default=0.01,
-                       help='水印面积阈值，低于此值认为修复完成 (默认: 0.01)')
+    parser.add_argument('--max-iterations', type=int, default=10,
+                       help='最大迭代次数 (默认: 10)')
+    parser.add_argument('--watermark-threshold', type=float, default=0.0001,
+                       help='水印面积阈值，低于此值认为修复完成 (默认: 0.0001)')
     parser.add_argument('--iopaint-model', type=str, default='lama',
                        help='IOPaint修复模型 (默认: lama)')
     parser.add_argument('--limit', type=int, default=None,
