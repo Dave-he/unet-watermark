@@ -481,8 +481,8 @@ class WatermarkPredictor:
                 'iopaint', 'run',
                 '--model', model_name,
                 '--device', self.device.type,
-                '--input', input_dir,
-                '--mask-dir', mask_dir,
+                '--image', input_dir,
+                '--mask', mask_dir,
                 '--output', output_dir
             ]
             
