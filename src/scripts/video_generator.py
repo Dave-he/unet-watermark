@@ -341,17 +341,14 @@ class VideoGenerator:
             try:
                 # 处理原图
                 original_frame = self.resize_image_with_padding(original_path, single_width, single_height)
-                # Replace Chinese text in the script:
-                # Line ~220: Change "原图" to "Original"
                 original_frame = self.add_text_overlay(original_frame, f"Original - {Path(original_path).name}", 'top')
                 
-                # Line ~224: Change "修复后" to "Repaired"
+                # 处理修复图 - 添加这行缺失的代码
+                repaired_frame = self.resize_image_with_padding(repaired_path, single_width, single_height)
                 repaired_frame = self.add_text_overlay(repaired_frame, f"Repaired - {Path(repaired_path).name}", 'top')
                 
-                # Line ~342: Change "原图" to "Original"
+                # 简化文字标签
                 original_frame = self.add_text_overlay(original_frame, f"Original", 'top')
-                
-                # Line ~346: Change "修复后" to "Repaired"
                 repaired_frame = self.add_text_overlay(repaired_frame, f"Repaired", 'top')
                 
                 # 合并左右图片
