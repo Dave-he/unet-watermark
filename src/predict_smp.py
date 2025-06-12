@@ -46,6 +46,10 @@ class WatermarkPredictor:
         self.available_models = self._find_available_models(model_path)
         self.current_model_index = 0
         
+        # 添加迭代级别的模型管理
+        self.iteration_model_index = 0
+        self.last_iteration_detected = True  # 上次迭代是否检测到水印
+        
         logger.info(f"预测器初始化完成，使用设备: {self.device}")
         logger.info(f"发现可用模型: {len(self.available_models)} 个")
         self._print_model_info()
@@ -94,6 +98,60 @@ class WatermarkPredictor:
             # 重新加载模型
             self.model, self.model_info = self._load_model(first_model_path)
             self.current_model_path = first_model_path
+    
+    def select_model_for_iteration(self, iteration):
+        """
+        为当前迭代选择最优模型
+        只有在上次迭代没有检测到水印时才轮换模型
+        
+        Args:
+            iteration (int): 当前迭代次数
+            
+        Returns:
+            bool: 是否成功选择了模型
+        """
+        # 第一次迭代或上次迭代没有检测到水印时才轮换模型
+        if iteration == 1 or not self.last_iteration_detected:
+            if iteration > 1 and not self.last_iteration_detected:
+                # 尝试下一个模型
+                if self.iteration_model_index < len(self.available_models) - 1:
+                    self.iteration_model_index += 1
+                    logger.info(f"上次迭代未检测到水印，切换到模型 {self.iteration_model_index + 1}/{len(self.available_models)}")
+                else:
+                    logger.info("已尝试所有模型，保持当前模型")
+                    return False
+            
+            # 加载选定的模型
+            target_model_path = self.available_models[self.iteration_model_index]
+            if target_model_path != self.current_model_path:
+                logger.info(f"为第 {iteration} 轮迭代加载模型: {os.path.basename(target_model_path)}")
+                self.model, self.model_info = self._load_model(target_model_path)
+                self.current_model_path = target_model_path
+        
+        return True
+    
+    def predict_mask_single_model(self, image_path):
+        """
+        使用当前模型预测水印掩码（不进行模型轮换）
+        
+        Args:
+            image_path (str): 图像路径
+            
+        Returns:
+            tuple: (mask, model_used, watermark_ratio)
+        """
+        current_model_name = os.path.basename(self.current_model_path)
+        
+        # 预测掩码
+        mask = self.predict_mask(image_path)
+        
+        # 计算水印面积比例
+        image = cv2.imread(image_path)
+        total_pixels = image.shape[0] * image.shape[1]
+        watermark_pixels = np.sum(mask > 0)
+        watermark_ratio = watermark_pixels / total_pixels
+        
+        return mask, current_model_name, watermark_ratio
     
     def predict_mask_with_model_switching(self, image_path, min_watermark_threshold=0.001):
         """
@@ -264,10 +322,18 @@ class WatermarkPredictor:
             for iteration in range(1, max_iterations + 1):
                 logger.info(f"开始第 {iteration}/{max_iterations} 轮处理")
                 
+                # 为当前迭代选择模型
+                if not self.select_model_for_iteration(iteration):
+                    logger.info("所有模型都已尝试，停止迭代")
+                    break
+                
                 # 第一阶段：批量掩码预测
-                masks_generated = self._stage1_batch_mask_prediction(
+                masks_generated, iteration_detected = self._stage1_batch_mask_prediction_optimized(
                     image_status, temp_dir, iteration, watermark_threshold
                 )
+                
+                # 更新迭代检测状态
+                self.last_iteration_detected = iteration_detected
                 
                 if not masks_generated:
                     logger.info("所有图片都已完成处理")
@@ -295,9 +361,9 @@ class WatermarkPredictor:
             # 清理临时目录
             shutil.rmtree(temp_dir, ignore_errors=True)
 
-    def _stage1_batch_mask_prediction(self, image_status, temp_dir, iteration, watermark_threshold):
+    def _stage1_batch_mask_prediction_optimized(self, image_status, temp_dir, iteration, watermark_threshold):
         """
-        第一阶段：批量掩码预测
+        第一阶段：批量掩码预测（优化版本 - 不在单张图片处理时轮换模型）
         
         Args:
             image_status (dict): 图片状态字典
@@ -306,34 +372,33 @@ class WatermarkPredictor:
             watermark_threshold (float): 水印阈值
             
         Returns:
-            bool: 是否生成了掩码
+            tuple: (是否生成了掩码, 本轮迭代是否检测到水印)
         """
-        logger.info("第一阶段：批量掩码预测")
+        logger.info("第一阶段：批量掩码预测（优化版本）")
         
         masks_generated = False
+        iteration_detected = False  # 本轮迭代是否有任何图片检测到水印
+        
         pending_images = [(name, info) for name, info in image_status.items() 
                          if not info['completed']]
         
         if not pending_images:
-            return False
+            return False, False
+        
+        current_model_name = os.path.basename(self.current_model_path)
+        logger.info(f"本轮迭代使用模型: {current_model_name}")
         
         # 使用进度条显示预测进度
-        progress_bar = tqdm(pending_images, desc="预测掩码", unit="张")
+        progress_bar = tqdm(pending_images, desc=f"预测掩码(模型:{current_model_name[:15]})", unit="张")
         
         for image_name, info in progress_bar:
             progress_bar.set_postfix({'当前': image_name[:15] + '...'})
             
             try:
-                # 使用多模型检测策略
-                mask, model_used, watermark_detected = self.predict_mask_with_model_switching(
-                    info['current_path'], min_watermark_threshold=0.001
+                # 使用当前模型预测（不轮换模型）
+                mask, model_used, watermark_ratio = self.predict_mask_single_model(
+                    info['current_path']
                 )
-                
-                # 计算水印比例
-                image = cv2.imread(info['current_path'])
-                total_pixels = image.shape[0] * image.shape[1]
-                watermark_pixels = np.sum(mask > 0)
-                watermark_ratio = watermark_pixels / total_pixels
                 
                 info['final_watermark_ratio'] = watermark_ratio
                 info['detection_model'] = model_used
@@ -344,11 +409,14 @@ class WatermarkPredictor:
                 info['final_mask_path'] = final_mask_path
                 
                 # 检查是否需要修复
-                if not watermark_detected or watermark_ratio < watermark_threshold:
+                if watermark_ratio < watermark_threshold:
                     logger.info(f"{image_name}: 无需修复 (水印比例: {watermark_ratio:.6f})")
                     info['completed'] = True
                     info['iterations'] = iteration - 1
                     continue
+                
+                # 检测到水印
+                iteration_detected = True
                 
                 # 保存当前迭代的掩码
                 mask_path = os.path.join(temp_dir, f"{image_name}_mask_iter{iteration}.png")
@@ -363,7 +431,8 @@ class WatermarkPredictor:
                 info['completed'] = True
                 info['iterations'] = iteration
         
-        return masks_generated
+        logger.info(f"本轮迭代完成，模型 {current_model_name} 检测状态: {'检测到水印' if iteration_detected else '未检测到水印'}")
+        return masks_generated, iteration_detected
 
     def _stage2_batch_repair(self, image_status, temp_dir, iteration, iopaint_model):
         """
@@ -607,10 +676,19 @@ class WatermarkPredictor:
                             '已完成': f"{sum(1 for info in current_images.values() if info['completed'])}/{len(image_paths)}"
                         })
                         
-                        # 使用多模型检测策略预测水印掩码
-                        mask, model_used, watermark_detected = self.predict_mask_with_model_switching(
-                            current_image_path, min_watermark_threshold=0.001
-                        )
+                        # 为当前迭代选择模型
+                        if not self.select_model_for_iteration(iteration):
+                            logger.info(f"{base_name}: 所有模型都已尝试，停止处理")
+                            info['completed'] = True
+                            info['iterations'] = iteration
+                            continue
+                        
+                        # 使用当前模型预测水印掩码
+                        mask, model_used, watermark_ratio = self.predict_mask_single_model(current_image_path)
+                        
+                        # 记录本次迭代是否检测到水印
+                        watermark_detected = watermark_ratio >= 0.001
+                        self.last_iteration_detected = watermark_detected
                         
                         # 计算水印面积比例
                     except Exception as e:
@@ -622,19 +700,16 @@ class WatermarkPredictor:
                         if self.device.type == 'cuda':
                             torch.cuda.empty_cache()
                         continue
-                    image = cv2.imread(current_image_path)
-                    total_pixels = image.shape[0] * image.shape[1]
-                    watermark_pixels = np.sum(mask > 0)
-                    watermark_ratio = watermark_pixels / total_pixels
+                    # watermark_ratio 已在 predict_mask_single_model 中计算
                     
                     # 更新图片信息
                     info = current_images[base_name]
                     info['final_watermark_ratio'] = watermark_ratio
                     info['detection_model'] = model_used
                     
-                    # 如果所有模型都没有检测到水印，认为图片已经清理完成
+                    # 如果当前模型没有检测到水印，认为图片已经清理完成
                     if not watermark_detected:
-                        logger.info(f"{base_name}: 所有模型都未检测到水印，认为清理完成")
+                        logger.info(f"{base_name}: 模型 {model_used} 未检测到水印，认为清理完成")
                         # 将图片移动到最终输出目录
                         final_output = os.path.join(output_dir, f"{base_name}_cleaned.png")
                         shutil.copy2(current_image_path, final_output)
