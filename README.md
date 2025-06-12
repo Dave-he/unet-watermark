@@ -100,6 +100,11 @@ iopaint run --model=lama \
   --output=data/out1 --model-dir=~/.cache
 
 python main.py repair
+
+python main.py repair --input data/train/watermarked --output data/result \
+  --model models/checkpoints/checkpoint_epoch_030.pth \
+  --iopaint-model lama \
+  --limit 100
 ```
 
 ## 3. 评估

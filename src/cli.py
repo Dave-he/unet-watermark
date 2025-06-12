@@ -178,7 +178,7 @@ def predict_command(args):
             output_dir=args.output,
             save_mask=args.save_mask or False,
             remove_watermark=args.save_overlay or False,
-            iopaint_model='lama',
+            iopaint_model=getattr(args, 'iopaint_model', 'lama'),
             limit=args.limit
         )
         
@@ -192,86 +192,125 @@ def predict_command(args):
         raise
 
 
-def iterative_repair_command(args):
-    """执行循环修复命令"""
-    print("="*60)
-    print("开始循环水印检测和修复")
-    print("="*60)
-    
-    # 检查必要参数
-    if not args.input:
-        raise ValueError("循环修复模式需要指定输入路径 --input")
-    if not args.output:
-        raise ValueError("循环修复模式需要指定输出路径 --output")
-    if not args.model:
-        raise ValueError("循环修复模式需要指定模型路径 --model")
-    
-    # 检查文件/目录是否存在
+def repair_command(args):
+    """修复命令"""
+    # 验证参数
     if not os.path.exists(args.input):
-        raise FileNotFoundError(f"输入路径不存在: {args.input}")
+        print(f"错误: 输入路径不存在: {args.input}")
+        return
+    
     if not os.path.exists(args.model):
-        raise FileNotFoundError(f"模型文件不存在: {args.model}")
+        print(f"错误: 模型文件不存在: {args.model}")
+        return
     
     # 设置设备
-    device = setup_device(args.device or 'auto')
+    device = setup_device(args.device)
     
     # 创建输出目录
     os.makedirs(args.output, exist_ok=True)
-    
-    # 打印修复信息
-    print(f"输入路径: {args.input}")
-    print(f"输出路径: {args.output}")
-    print(f"模型路径: {args.model}")
-    print(f"最大迭代次数: {args.max_iterations or 5}")
-    print(f"水印阈值: {args.watermark_threshold or 0.01}")
-    print(f"IOPaint模型: {args.iopaint_model or 'lama'}")
-    print()
     
     # 检查iopaint是否安装
     try:
         subprocess.run(['iopaint', '--help'], capture_output=True, check=True)
     except (subprocess.CalledProcessError, FileNotFoundError):
-        print("错误: iopaint未安装。请使用以下命令安装:")
-        print("pip install iopaint")
+        print("错误: iopaint未安装或不在PATH中")
+        print("请运行: pip install iopaint")
         return
     
-    try:
-        # 加载配置（如果提供）
-        cfg = get_cfg_defaults()
-        if args.config:
-            update_config(cfg, args.config)
+    # 检查是否使用优化模式
+    use_optimizer = getattr(args, 'optimize', False)
+    
+    if use_optimizer:
+        print("使用优化批处理模式...")
+        from scripts.batch_repair_optimizer import BatchRepairOptimizer
+        from utils.cuda_monitor import cuda_memory_context, log_memory_usage
+        
+        # 记录初始内存状态
+        log_memory_usage("开始处理前 - ")
+        
+        # 使用CUDA内存管理上下文
+        with cuda_memory_context(monitor=True) as monitor:
+            # 创建优化器
+            optimizer = BatchRepairOptimizer(
+                model_path=args.model,
+                config_path=getattr(args, 'config', None),
+                device=device
+            )
+            
+            # 执行优化处理
+            results = optimizer.process_batch_with_optimization(
+                input_path=args.input,
+                output_dir=args.output,
+                max_iterations=getattr(args, 'max_iterations', 5),
+                watermark_threshold=getattr(args, 'threshold', 0.01),
+                iopaint_model=getattr(args, 'iopaint_model', 'lama'),
+                limit=getattr(args, 'limit', None),
+                batch_size=getattr(args, 'batch_size', 10),
+                pause_interval=getattr(args, 'pause_interval', 50)
+            )
+            
+            # 记录内存使用摘要
+            if monitor:
+                memory_summary = monitor.get_memory_summary()
+                print("\n内存使用摘要:")
+                if 'current' in memory_summary:
+                    current = memory_summary['current']
+                    print(f"  当前GPU内存: {current.get('gpu_allocated_gb', 0):.2f}GB (分配) / "
+                          f"{current.get('gpu_reserved_gb', 0):.2f}GB (保留)")
+                    print(f"  当前系统内存: {current.get('ram_percent', 0):.1f}%")
+                
+                if 'statistics' in memory_summary:
+                    stats = memory_summary['statistics']
+                    print(f"  峰值GPU内存: {stats.get('gpu_allocated_max_gb', 0):.2f}GB (分配) / "
+                          f"{stats.get('gpu_reserved_max_gb', 0):.2f}GB (保留)")
+        
+        # 保存结果摘要
+        summary_path = os.path.join(args.output, 'optimized_repair_summary.json')
+        
+    else:
+        print("使用标准处理模式...")
+        
+        # 加载配置
+        config_path = getattr(args, 'config', None)
+        if config_path and not os.path.exists(config_path):
+            print(f"警告: 配置文件不存在: {config_path}，使用默认配置")
+            config_path = None
         
         # 创建预测器
         predictor = WatermarkPredictor(
             model_path=args.model,
-            config_path=args.config,
-            device=str(device)
+            config_path=config_path,
+            device=device
         )
         
-        # 覆盖阈值配置
-        if args.threshold is not None:
-            predictor.cfg.PREDICT.THRESHOLD = args.threshold
+        # 覆盖阈值（如果指定）
+        if hasattr(args, 'threshold') and args.threshold is not None:
+            predictor.watermark_threshold = args.threshold
         
-        # 执行循环修复
+        # 执行修复
         results = predictor.process_batch_iterative(
             input_path=args.input,
             output_dir=args.output,
-            max_iterations=args.max_iterations or 5,
-            watermark_threshold=args.watermark_threshold or 0.01,
-            iopaint_model=args.iopaint_model or 'lama',
-            limit=args.limit
+            max_iterations=getattr(args, 'max_iterations', 10),
+            watermark_threshold=getattr(args, 'threshold', 1e-6),
+            iopaint_model=getattr(args, 'iopaint_model', 'lama'),
+            limit=getattr(args, 'limit', None)
         )
         
         # 保存结果摘要
-        import json
-        summary_path = os.path.join(args.output, 'iterative_repair_summary.json')
-        with open(summary_path, 'w', encoding='utf-8') as f:
-            json.dump(results, f, indent=2, ensure_ascii=False)
-        print(f"处理摘要已保存: {summary_path}")
-        
-    except Exception as e:
-        print(f"循环修复过程中出现错误: {str(e)}")
-        raise
+        summary_path = os.path.join(args.output, 'repair_summary.json')
+    
+    # 保存结果
+    import json
+    with open(summary_path, 'w', encoding='utf-8') as f:
+        json.dump(results, f, indent=2, ensure_ascii=False)
+    
+    print(f"\n修复完成！结果摘要已保存: {summary_path}")
+    
+    # 记录最终内存状态
+    if device == 'cuda':
+        from utils.cuda_monitor import log_memory_usage
+        log_memory_usage("处理完成后 - ")
 
 
 def main():
@@ -342,6 +381,8 @@ def main():
                                help='保存叠加可视化图像')
     predict_parser.add_argument('--limit', type=int, 
                                help='随机选择的图片数量限制')
+    predict_parser.add_argument('--iopaint-model', type=str, default='lama',
+                               help='IOPaint修复模型 (默认: lama)')
     
     # 循环修复命令
     repair_parser = subparsers.add_parser('repair', help='循环检测和修复水印')
@@ -369,6 +410,11 @@ def main():
     repair_parser.add_argument('--limit', type=int, default=10,
                               help='随机选择的图片数量限制')
     
+    # 优化相关参数
+    repair_parser.add_argument('--optimize', action='store_true', help='启用优化批处理模式')
+    repair_parser.add_argument('--batch-size', type=int, default=10, help='批处理大小（优化模式）')
+    repair_parser.add_argument('--pause-interval', type=int, default=50, help='暂停清理间隔（优化模式）')
+    
     # 解析参数
     args = parser.parse_args()
     
@@ -384,7 +430,7 @@ def main():
         elif args.command == 'predict':
             predict_command(args)
         elif args.command == 'repair':
-            iterative_repair_command(args)
+            repair_command(args)
         else:
             parser.print_help()
             

@@ -141,31 +141,49 @@ class WatermarkPredictor:
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"模型文件不存在: {model_path}")
         
-        # 创建模型
-        model = create_model_from_config(self.cfg).to(self.device)
-        
-        # 加载权重 - 添加 weights_only=False 以兼容包含配置对象的模型文件
-        checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
-        
-        if 'model_state_dict' in checkpoint:
-            model.load_state_dict(checkpoint['model_state_dict'])
-            logger.info(f"从检查点加载模型: {model_path}")
-            model_info = {
-                'epoch': checkpoint.get('epoch', 'Unknown'),
-                'val_loss': checkpoint.get('val_loss', 'Unknown'),
-                'val_metrics': checkpoint.get('val_metrics', {}),
-                'train_loss': checkpoint.get('train_loss', 'Unknown'),
-                'train_metrics': checkpoint.get('train_metrics', {}),
-                'best_val_loss': checkpoint.get('best_val_loss', 'Unknown'),
-                'is_final': checkpoint.get('is_final', False)
-            }
-        else:
-            model.load_state_dict(checkpoint)
-            logger.info(f"加载模型权重: {model_path}")
-            model_info = {'epoch': 'Unknown', 'val_loss': 'Unknown'}
-        
-        model.eval()
-        return model, model_info
+        try:
+            # 清理之前的模型内存
+            if hasattr(self, 'model') and self.model is not None:
+                del self.model
+                if self.device.type == 'cuda':
+                    torch.cuda.empty_cache()
+            
+            # 创建模型
+            model = create_model_from_config(self.cfg).to(self.device)
+            
+            # 加载权重 - 添加 weights_only=False 以兼容包含配置对象的模型文件
+            checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
+            
+            if 'model_state_dict' in checkpoint:
+                model.load_state_dict(checkpoint['model_state_dict'])
+                logger.info(f"从检查点加载模型: {model_path}")
+                model_info = {
+                    'epoch': checkpoint.get('epoch', 'Unknown'),
+                    'val_loss': checkpoint.get('val_loss', 'Unknown'),
+                    'val_metrics': checkpoint.get('val_metrics', {}),
+                    'train_loss': checkpoint.get('train_loss', 'Unknown'),
+                    'train_metrics': checkpoint.get('train_metrics', {}),
+                    'best_val_loss': checkpoint.get('best_val_loss', 'Unknown'),
+                    'is_final': checkpoint.get('is_final', False)
+                }
+            else:
+                model.load_state_dict(checkpoint)
+                logger.info(f"加载模型权重: {model_path}")
+                model_info = {'epoch': 'Unknown', 'val_loss': 'Unknown'}
+            
+            # 清理checkpoint内存
+            del checkpoint
+            if self.device.type == 'cuda':
+                torch.cuda.empty_cache()
+            
+            model.eval()
+            return model, model_info
+            
+        except Exception as e:
+            # 确保在异常情况下也清理GPU内存
+            if self.device.type == 'cuda':
+                torch.cuda.empty_cache()
+            raise e
     
     def _print_model_info(self):
         """打印模型信息"""
@@ -279,25 +297,35 @@ class WatermarkPredictor:
                                         leave=False)
                 
                 for base_name in iteration_progress:
-                    # 跳过已完成的图片
-                    if current_images[base_name]['completed']:
-                        continue
+                    try:
+                        # 跳过已完成的图片
+                        if current_images[base_name]['completed']:
+                            continue
+                            
+                        # 获取当前图片路径
+                        current_image_path = current_images[base_name]['current_path']
                         
-                    # 获取当前图片路径
-                    current_image_path = current_images[base_name]['current_path']
-                    
-                    # 更新进度条描述，显示当前处理的图片
-                    iteration_progress.set_postfix({
-                        '当前': base_name[:20] + '...' if len(base_name) > 20 else base_name,
-                        '已完成': f"{sum(1 for info in current_images.values() if info['completed'])}/{len(image_paths)}"
-                    })
-                    
-                    # 使用多模型检测策略预测水印掩码
-                    mask, model_used, watermark_detected = self.predict_mask_with_model_switching(
-                        current_image_path, min_watermark_threshold=0.001
-                    )
-                    
-                    # 计算水印面积比例
+                        # 更新进度条描述，显示当前处理的图片
+                        iteration_progress.set_postfix({
+                            '当前': base_name[:20] + '...' if len(base_name) > 20 else base_name,
+                            '已完成': f"{sum(1 for info in current_images.values() if info['completed'])}/{len(image_paths)}"
+                        })
+                        
+                        # 使用多模型检测策略预测水印掩码
+                        mask, model_used, watermark_detected = self.predict_mask_with_model_switching(
+                            current_image_path, min_watermark_threshold=0.001
+                        )
+                        
+                        # 计算水印面积比例
+                    except Exception as e:
+                        logger.error(f"{base_name}: 处理过程中出现错误: {str(e)}")
+                        # 标记为完成以避免无限循环
+                        current_images[base_name]['completed'] = True
+                        current_images[base_name]['iterations'] = iteration
+                        # 清理GPU内存
+                        if self.device.type == 'cuda':
+                            torch.cuda.empty_cache()
+                        continue
                     image = cv2.imread(current_image_path)
                     total_pixels = image.shape[0] * image.shape[1]
                     watermark_pixels = np.sum(mask > 0)
@@ -348,10 +376,23 @@ class WatermarkPredictor:
                         # 修复失败的图片标记为完成，避免无限循环
                         info['completed'] = True
                         info['iterations'] = iteration
+                    
+                    # 每处理几张图片后清理一次GPU内存
+                    if self.device.type == 'cuda' and (len([n for n in pending_images if current_images[n]['completed']]) % 5 == 0):
+                        torch.cuda.empty_cache()
                 
                 # 检查是否所有图片都已完成
                 completed_count = sum(1 for info in current_images.values() if info['completed'])
                 logger.info(f"第 {iteration} 轮完成，已完成图片: {completed_count}/{len(image_paths)}")
+                
+                # 每轮结束后清理GPU内存
+                if self.device.type == 'cuda':
+                    torch.cuda.empty_cache()
+                    # 打印GPU内存使用情况
+                    if torch.cuda.is_available():
+                        memory_allocated = torch.cuda.memory_allocated(self.device) / 1024**3
+                        memory_reserved = torch.cuda.memory_reserved(self.device) / 1024**3
+                        logger.info(f"GPU内存使用: {memory_allocated:.2f}GB / {memory_reserved:.2f}GB")
             
             # 处理未完成的图片（达到最大迭代次数）
             for base_name, info in current_images.items():
@@ -422,35 +463,49 @@ class WatermarkPredictor:
         Returns:
             np.ndarray: 预测的掩码
         """
-        # 读取图像
-        image = cv2.imread(image_path)
-        if image is None:
-            raise ValueError(f"无法读取图像: {image_path}")
-        
-        original_size = (image.shape[1], image.shape[0])  # (width, height)
-        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        
-        # 应用变换
-        augmented = self.transform(image=image_rgb)
-        input_tensor = augmented['image'].unsqueeze(0).to(self.device)
-        
-        # 模型推理
-        with torch.no_grad():
-            output = self.model(input_tensor)
-            prob = torch.sigmoid(output)
-        
-        # 处理掩码
-        mask = prob.cpu().numpy()[0, 0]  # 移除批次和通道维度
-        mask = cv2.resize(mask, original_size)
-        
-        # 二值化掩码
-        binary_mask = (mask > self.cfg.PREDICT.THRESHOLD).astype(np.uint8) * 255
-        
-        # 后处理
-        if self.cfg.PREDICT.POST_PROCESS:
-            binary_mask = self._post_process_mask(binary_mask)
-        
-        return binary_mask
+        try:
+            # 读取图像
+            image = cv2.imread(image_path)
+            if image is None:
+                raise ValueError(f"无法读取图像: {image_path}")
+            
+            original_size = (image.shape[1], image.shape[0])  # (width, height)
+            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            
+            # 应用变换
+            augmented = self.transform(image=image_rgb)
+            input_tensor = augmented['image'].unsqueeze(0).to(self.device)
+            
+            # 模型推理
+            with torch.no_grad():
+                output = self.model(input_tensor)
+                prob = torch.sigmoid(output)
+                
+                # 立即移动到CPU并清理GPU内存
+                mask = prob.cpu().numpy()[0, 0]  # 移除批次和通道维度
+                
+                # 清理GPU内存
+                del input_tensor, output, prob
+                if self.device.type == 'cuda':
+                    torch.cuda.empty_cache()
+            
+            # 调整掩码大小
+            mask = cv2.resize(mask, original_size)
+            
+            # 二值化掩码
+            binary_mask = (mask > self.cfg.PREDICT.THRESHOLD).astype(np.uint8) * 255
+            
+            # 后处理
+            if self.cfg.PREDICT.POST_PROCESS:
+                binary_mask = self._post_process_mask(binary_mask)
+            
+            return binary_mask
+            
+        except Exception as e:
+            # 确保在异常情况下也清理GPU内存
+            if self.device.type == 'cuda':
+                torch.cuda.empty_cache()
+            raise e
     
     def _post_process_mask(self, mask):
         """掩码后处理"""
@@ -469,7 +524,7 @@ class WatermarkPredictor:
         
         return mask
     
-    def remove_watermark_with_iopaint(self, image_path, mask, output_path, model_name='lama'):
+    def remove_watermark_with_iopaint(self, image_path, mask, output_path, model_name='lama', timeout=300):
         """
         使用iopaint去除水印
         
@@ -478,10 +533,12 @@ class WatermarkPredictor:
             mask (np.ndarray): 掩码
             output_path (str): 输出路径
             model_name (str): iopaint模型名称
+            timeout (int): 超时时间（秒）
             
         Returns:
             tuple: (成功标志, 消息)
         """
+        temp_mask_path = None
         try:
             # 创建临时掩码文件
             with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as temp_mask:
@@ -498,8 +555,9 @@ class WatermarkPredictor:
                 '--mask', temp_mask_path
             ]
             
-            # 运行iopaint
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            # 运行iopaint，添加超时机制
+            logger.debug(f"执行IOPaint命令: {' '.join(cmd)}")
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=timeout)
             
             # IOPaint 可能会生成不同的输出文件名，需要重命名
             generated_output = os.path.join(os.path.dirname(output_path), os.path.basename(image_path))
@@ -507,15 +565,26 @@ class WatermarkPredictor:
                 import shutil
                 shutil.move(generated_output, output_path)
             
-            # 清理临时文件
-            os.unlink(temp_mask_path)
+            # 验证输出文件是否存在
+            if not os.path.exists(output_path):
+                return False, f"IOPaint未生成预期的输出文件: {output_path}"
             
             return True, "成功"
             
+        except subprocess.TimeoutExpired:
+            return False, f"IOPaint处理超时（{timeout}秒），可能卡住"
         except subprocess.CalledProcessError as e:
-            return False, f"IOPaint错误: {e.stderr}"
+            error_msg = e.stderr if e.stderr else e.stdout if e.stdout else "未知错误"
+            return False, f"IOPaint错误: {error_msg}"
         except Exception as e:
             return False, f"错误: {str(e)}"
+        finally:
+            # 清理临时文件
+            if temp_mask_path and os.path.exists(temp_mask_path):
+                try:
+                    os.unlink(temp_mask_path)
+                except Exception as e:
+                    logger.warning(f"清理临时掩码文件失败: {e}")
     
     def process_single_image(self, image_path, output_dir, save_mask=True, remove_watermark=False, iopaint_model='lama'):
         """
