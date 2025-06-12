@@ -70,6 +70,8 @@ def repair_command(args):
     print(f"IOPaint模型: {args.iopaint_model}")
     if hasattr(args, 'limit') and args.limit:
         print(f"处理图片限制: {args.limit} 张")
+    if getattr(args, 'generate_video', False):
+        print(f"生成对比视频: 是 ({args.video_width}x{args.video_height}, {args.fps}fps, {args.duration}s/图)")
     print()
     
     try:
@@ -110,6 +112,40 @@ def repair_command(args):
         
         print(f"\n结果摘要已保存: {summary_path}")
         
+        # 检查是否需要生成视频
+        if getattr(args, 'generate_video', False):
+            print("开始生成对比视频...")
+            try:
+                from scripts.video_generator import VideoGenerator
+                
+                # 检查mask目录
+                mask_dir = os.path.join(args.output, 'masks')
+                if not os.path.exists(mask_dir):
+                    mask_dir = None
+                
+                # 创建视频生成器
+                generator = VideoGenerator(
+                    input_dir=args.input,
+                    repair_dir=args.output,
+                    output_dir=args.output,
+                    mask_dir=mask_dir,
+                    width=getattr(args, 'video_width', 1920),
+                    height=getattr(args, 'video_height', 1080),
+                    duration_per_image=getattr(args, 'duration', 2.0),
+                    fps=getattr(args, 'fps', 30)
+                )
+                
+                # 根据是否有mask选择视频类型
+                if mask_dir:
+                    video_path = generator.create_three_way_comparison_video()
+                    print(f"三路对比视频已生成: {video_path}")
+                else:
+                    video_path = generator.create_side_by_side_video()
+                    print(f"并排对比视频已生成: {video_path}")
+                    
+            except Exception as e:
+                print(f"视频生成失败: {str(e)}")
+        
     except Exception as e:
         print(f"修复过程中出现错误: {str(e)}")
         raise
@@ -124,6 +160,8 @@ def main():
 示例用法:
   python cli_simplified.py --input /path/to/images --output /path/to/output --model /path/to/model.pth
   python cli_simplified.py --input /path/to/images --output /path/to/output --model /path/to/model.pth --max-iterations 10 --watermark-threshold 0.005
+  python cli_simplified.py --input /path/to/images --output /path/to/output --model /path/to/model.pth --limit 50 --generate-video
+  python cli_simplified.py --input /path/to/images --output /path/to/output --model /path/to/model.pth --generate-video --video-width 1280 --video-height 720 --fps 24
         """
     )
     
@@ -145,6 +183,18 @@ def main():
                        help='IOPaint修复模型 (默认: lama)')
     parser.add_argument('--limit', type=int, default=None,
                        help='随机处理的图片数量限制 (默认: 处理所有图片)')
+    
+    # 视频生成参数
+    parser.add_argument('--generate-video', action='store_true',
+                       help='修复完成后自动生成对比视频')
+    parser.add_argument('--video-width', type=int, default=1920,
+                       help='视频宽度 (默认: 1920)')
+    parser.add_argument('--video-height', type=int, default=1080,
+                       help='视频高度 (默认: 1080)')
+    parser.add_argument('--duration', type=float, default=2.0,
+                       help='每张图片展示时长(秒) (默认: 2.0)')
+    parser.add_argument('--fps', type=int, default=30,
+                       help='视频帧率 (默认: 30)')
     
     args = parser.parse_args()
     
