@@ -77,13 +77,15 @@ class ModelSelector:
         return sorted(image_paths)
     
     def _get_model_paths(self):
-        """获取模型目录下的所有模型路径"""
+        """获取模型目录下的所有模型路径（包括子目录）"""
         model_paths = []
         
         if os.path.isdir(self.model_dir):
-            for filename in os.listdir(self.model_dir):
-                if filename.endswith('.pth'):
-                    model_paths.append(os.path.join(self.model_dir, filename))
+            # 递归搜索所有子目录
+            for root, dirs, files in os.walk(self.model_dir):
+                for filename in files:
+                    if filename.endswith('.pth'):
+                        model_paths.append(os.path.join(root, filename))
         elif os.path.isfile(self.model_dir):
             if self.model_dir.endswith('.pth'):
                 model_paths.append(self.model_dir)
