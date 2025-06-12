@@ -128,7 +128,7 @@ python src/scripts/model_selector.py \
 python src/scripts/video_generator.py --input data/original --repair data/repaired --output videos
 
 # 生成并排对比视频
-python src/scripts/video_generator.py --input data/original --repair data/repaired --output videos --mode sidebyside
+python src/scripts/video_generator.py --input data/train/watermarked --repair data/result --output videos --mode sidebyside
 
 # 自定义参数
 python src/scripts/video_generator.py -i data/original -r data/repaired -o videos -w 1920 -h 1080 -d 3 -f 24 -v

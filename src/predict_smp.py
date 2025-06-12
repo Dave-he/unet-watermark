@@ -412,8 +412,8 @@ class WatermarkPredictor:
                     'input': info['original_path'],
                     'output': os.path.join(output_dir, f"{base_name}_cleaned.png" if info['final_watermark_ratio'] < watermark_threshold else f"{base_name}_partial_cleaned.png"),
                     'iterations': info['iterations'],
-                    'final_watermark_ratio': info['final_watermark_ratio'],
-                    'converged': info['final_watermark_ratio'] < watermark_threshold,
+                    'final_watermark_ratio': float(info['final_watermark_ratio']),  # 确保是Python float类型
+                    'converged': bool(info['final_watermark_ratio'] < watermark_threshold),  # 转换为Python bool类型
                     'detection_model': info['detection_model']  # 添加检测模型信息
                 }
                 results.append(result)
@@ -796,8 +796,8 @@ class WatermarkPredictor:
                 'input': image_path,
                 'output': final_output,
                 'iterations': iteration,
-                'final_watermark_ratio': watermark_ratio if 'watermark_ratio' in locals() else 0,
-                'converged': not watermark_detected
+                'final_watermark_ratio': float(watermark_ratio if 'watermark_ratio' in locals() else 0),
+                'converged': bool(not watermark_detected)
             }
             
             if watermark_detected:

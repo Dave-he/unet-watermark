@@ -14,7 +14,9 @@ from PIL import Image, ImageDraw, ImageFont
 import logging
 import argparse
 import sys
+import locale
 from tqdm import tqdm
+
 
 # 设置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -131,6 +133,15 @@ class VideoGenerator:
         
         return result
     
+
+    
+    # Set proper encoding
+    if sys.platform.startswith('win'):
+        locale.setlocale(locale.LC_ALL, 'Chinese (Simplified)_China.936')
+    else:
+        locale.setlocale(locale.LC_ALL, 'zh_CN.UTF-8')
+    
+    # In the add_text_overlay method, ensure text is properly encoded
     def add_text_overlay(self, image, text, position='top'):
         """
         在图片上添加文字标签
@@ -339,11 +350,18 @@ class VideoGenerator:
             try:
                 # 处理原图
                 original_frame = self.resize_image_with_padding(original_path, single_width, single_height)
-                original_frame = self.add_text_overlay(original_frame, f"原图", 'top')
+                # Replace Chinese text in the script:
+                # Line ~220: Change "原图" to "Original"
+                original_frame = self.add_text_overlay(original_frame, f"Original - {Path(original_path).name}", 'top')
                 
-                # 处理修复图
-                repaired_frame = self.resize_image_with_padding(repaired_path, single_width, single_height)
-                repaired_frame = self.add_text_overlay(repaired_frame, f"修复后", 'top')
+                # Line ~224: Change "修复后" to "Repaired"
+                repaired_frame = self.add_text_overlay(repaired_frame, f"Repaired - {Path(repaired_path).name}", 'top')
+                
+                # Line ~342: Change "原图" to "Original"
+                original_frame = self.add_text_overlay(original_frame, f"Original", 'top')
+                
+                # Line ~346: Change "修复后" to "Repaired"
+                repaired_frame = self.add_text_overlay(repaired_frame, f"Repaired", 'top')
                 
                 # 合并左右图片
                 combined_frame = np.hstack([original_frame, repaired_frame])
