@@ -100,14 +100,24 @@ def create_model_from_config(cfg) -> nn.Module:
     Returns:
         创建的模型实例
     """
-    return SMPModelFactory.create_model(
-        model_name=cfg.MODEL.NAME,
-        encoder_name=cfg.MODEL.ENCODER_NAME,
-        encoder_weights=cfg.MODEL.ENCODER_WEIGHTS,
-        in_channels=cfg.MODEL.IN_CHANNELS,
-        classes=cfg.MODEL.CLASSES,
-        activation=cfg.MODEL.ACTIVATION,
-    )
+    # 基础参数
+    model_params = {
+        'model_name': cfg.MODEL.NAME,
+        'encoder_name': cfg.MODEL.ENCODER_NAME,
+        'encoder_weights': cfg.MODEL.ENCODER_WEIGHTS,
+        'in_channels': cfg.MODEL.IN_CHANNELS,
+        'classes': cfg.MODEL.CLASSES,
+        'activation': cfg.MODEL.ACTIVATION,
+    }
+    
+    # 添加可选的架构参数
+    if hasattr(cfg.MODEL, 'ENCODER_DEPTH'):
+        model_params['encoder_depth'] = cfg.MODEL.ENCODER_DEPTH
+    
+    if hasattr(cfg.MODEL, 'DECODER_CHANNELS'):
+        model_params['decoder_channels'] = cfg.MODEL.DECODER_CHANNELS
+    
+    return SMPModelFactory.create_model(**model_params)
 
 # 为了兼容性，提供一个简单的包装类
 class WatermarkSegmentationModel(nn.Module):

@@ -102,7 +102,7 @@ iopaint run --model=lama \
 python main.py repair
 
 python main.py repair --input data/train/watermarked --output data/result \
-  --model models/checkpoints/checkpoint_epoch_030.pth \
+  --model models/unet_watermark.pth \
   --iopaint-model lama \
   --limit 100 --generate-video
 ```

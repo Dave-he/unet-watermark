@@ -6,6 +6,8 @@ MODEL:
   NAME: "UnetPlusPlus"  # SMP支持的模型
   ENCODER_NAME: "resnet34"  # 编码器骨干网络: resnet34, efficientnet-b0, etc.
   ENCODER_WEIGHTS: "imagenet"  # 预训练权重
+  ENCODER_DEPTH: 5  # 编码器深度，5层架构
+  DECODER_CHANNELS: [256, 128, 64, 32, 16]  # 解码器通道数，对应5层结构
   IN_CHANNELS: 3  # 输入通道数
   CLASSES: 1  # 输出类别数（水印分割为二分类）
   ACTIVATION: null  # 激活函数，null表示不使用

@@ -115,7 +115,12 @@ def validate_dataset(base_dir, dry_run=False):
         for dir_name, files in invalid_files.items():
             if files:
                 print(f"\n  {dir_name} 目录中的孤立文件 ({len(files)} 个):")
-                for filename in sorted(files)[:10]:  # 只显示前10个
+                # 显示前10个文件信息，但删除所有文件
+                for i, filename in enumerate(sorted(files)):
+                    if i < 10:  # 只显示前10个的详细信息
+                        show_details = True
+                    else:
+                        show_details = False
                     file_path = None
                     for ext in ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif']:
                         potential_path = os.path.join(existing_dirs[dir_name], filename + ext)
@@ -125,13 +130,19 @@ def validate_dataset(base_dir, dry_run=False):
                     
                     if file_path:
                         if dry_run:
-                            print(f"    [检测] 将删除: {file_path}")
+                            if show_details:
+                                print(f"    [检测] 将删除: {file_path}")
                         else:
-                            print(f"    [删除] {file_path}")
+                            if show_details:
+                                print(f"    [删除] {file_path}")
                             try:
                                 os.remove(file_path)
+                                if not show_details:
+                                    # 对于不显示详细信息的文件，静默删除
+                                    pass
                             except Exception as e:
-                                print(f"    [错误] 删除失败: {e}")
+                                if show_details:
+                                    print(f"    [错误] 删除失败: {e}")
                 
                 if len(files) > 10:
                     print(f"    ... 还有 {len(files) - 10} 个文件")
