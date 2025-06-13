@@ -4,6 +4,7 @@ from pathlib import Path
 from collections import defaultdict
 import cv2
 import numpy as np
+import shutil
 
 def get_filename_without_ext(filepath):
     """获取不带扩展名的文件名"""
@@ -50,7 +51,7 @@ def get_image_files(directory):
     
     return files
 
-def validate_dataset(base_dir, dry_run=False):
+def validate_dataset(base_dir, dry_run=False, move_dir=None):
     """
     验证数据集的完整性，检查三个目录之间的对应关系
     
@@ -191,18 +192,37 @@ def validate_dataset(base_dir, dry_run=False):
                     if file_path:
                         if dry_run:
                             if show_details:
-                                print(f"    [检测] 将删除: {file_path}")
+                                action_text = "移动" if move_dir else "删除"
+                                print(f"    [检测] 将{action_text}: {file_path}")
                         else:
-                            if show_details:
-                                print(f"    [删除] {file_path}")
-                            try:
-                                os.remove(file_path)
-                                if not show_details:
-                                    # 对于不显示详细信息的文件，静默删除
-                                    pass
-                            except Exception as e:
+                            if move_dir:
+                                # 移动文件到指定目录
+                                try:
+                                    # 创建目标目录结构
+                                    rel_path = os.path.relpath(file_path, base_dir)
+                                    target_path = os.path.join(move_dir, rel_path)
+                                    target_dir = os.path.dirname(target_path)
+                                    os.makedirs(target_dir, exist_ok=True)
+                                    
+                                    # 移动文件
+                                    shutil.move(file_path, target_path)
+                                    if show_details:
+                                        print(f"    [移动] {file_path} -> {target_path}")
+                                except Exception as e:
+                                    if show_details:
+                                        print(f"    [错误] 移动失败: {e}")
+                            else:
+                                # 删除文件
                                 if show_details:
-                                    print(f"    [错误] 删除失败: {e}")
+                                    print(f"    [删除] {file_path}")
+                                try:
+                                    os.remove(file_path)
+                                    if not show_details:
+                                        # 对于不显示详细信息的文件，静默删除
+                                        pass
+                                except Exception as e:
+                                    if show_details:
+                                        print(f"    [错误] 删除失败: {e}")
                 
                 if len(files) > 10:
                     print(f"    ... 还有 {len(files) - 10} 个文件")
@@ -221,20 +241,29 @@ def validate_dataset(base_dir, dry_run=False):
     
     # 显示操作结果
     print("\n" + "="*60)
-    mode_text = "检测模式" if dry_run else "清理模式"
+    if dry_run:
+        mode_text = "检测模式"
+    else:
+        mode_text = "移动模式" if move_dir else "删除模式"
     print(f"运行模式: {mode_text}")
+    
+    if move_dir and not dry_run:
+        print(f"目标目录: {move_dir}")
     
     if dry_run:
         if total_invalid > 0:
+            action_text = "移动" if move_dir else "删除"
             print(f"检测结果: 发现 {total_invalid} 个无效文件")
-            print("提示: 使用 --delete 参数可真正执行删除操作")
+            print(f"提示: 使用 --delete 参数可真正执行{action_text}操作")
         else:
             print("检测结果: 数据集完整，无需清理")
     else:
         if total_invalid > 0:
-            print(f"清理完成: 尝试删除 {total_invalid} 个无效文件")
+            action_text = "移动" if move_dir else "删除"
+            print(f"清理完成: 尝试{action_text} {total_invalid} 个无效文件")
         else:
-            print("清理完成: 数据集完整，无文件被删除")
+            action_text = "移动" if move_dir else "删除"
+            print(f"清理完成: 数据集完整，无文件被{action_text}")
         print(f"最终有效文件数: {len(valid_files)}")
 
 def main():
@@ -242,9 +271,10 @@ def main():
         description="验证数据集完整性，检查watermarked、clean、masks目录之间的对应关系",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""使用示例:
-  python check.py                    # 检测模式，只显示无效文件
-  python check.py --delete           # 清理模式，删除无效文件
-  python check.py --base-dir custom  # 指定自定义基础目录
+  python check.py                              # 检测模式，只显示无效文件
+  python check.py --delete                     # 清理模式，删除无效文件
+  python check.py --delete --move-dir backup   # 清理模式，移动无效文件到backup目录
+  python check.py --base-dir custom            # 指定自定义基础目录
   
 数据有效性规则:
   - 文件在以下任一组合中存在对应文件即为有效:
@@ -269,6 +299,13 @@ def main():
         help="基础目录路径（默认: data/train）"
     )
     
+    parser.add_argument(
+        "--move-dir",
+        type=str,
+        default="data/backup",
+        help="移动无效文件到指定目录（如不指定则删除文件）"
+    )
+    
     args = parser.parse_args()
     
     print(f"基础目录: {args.base_dir}")
@@ -276,7 +313,7 @@ def main():
     print("-" * 60)
     
     # 执行数据集验证
-    validate_dataset(args.base_dir, dry_run=not args.delete)
+    validate_dataset(args.base_dir, dry_run=not args.delete, move_dir=getattr(args, 'move_dir', None))
 
 if __name__ == "__main__":
     main()
