@@ -32,7 +32,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('auto_training_loop.log'),
+        logging.FileHandler('logs/auto_training_loop.log'),
         logging.StreamHandler()
     ]
 )
@@ -49,12 +49,12 @@ class AutoTrainingLoop:
         
         # 数据路径
         self.models_dir = os.path.join(self.project_root, 'models')
-        self.checkpoint_dir = os.path.join(self.models_dir, 'checkpoint')
+        self.checkpoint_dir = os.path.join(self.models_dir, 'checkpoints')
         self.test_data_dir = os.path.join(self.project_root, 'data/test')
         self.train_data_dir = os.path.join(self.project_root, 'data/train')
         
         # 输出路径
-        self.output_base_dir = config.get('output_base_dir', 'training_cycles')
+        self.output_base_dir = config.get('output_base_dir', 'models/auto')
         os.makedirs(self.output_base_dir, exist_ok=True)
         
         # 验证路径存在
@@ -283,15 +283,17 @@ class AutoTrainingLoop:
                 
                 try:
                     # 生成带水印图片
-                    success = generate_watermarked_image(
+                    watermarked_img, mask = generate_watermarked_image(
                         clean_img_path, watermark_path, 
-                        watermarked_path, mask_path,
-                        transparent=use_transparent
+                        enhance_transparent=use_transparent
                     )
                     
-                    if success:
-                        generated_count += 1
-                        pbar.update(1)
+                    # 保存图片
+                    watermarked_img.save(watermarked_path, quality=95)
+                    mask.save(mask_path)
+                    
+                    generated_count += 1
+                    pbar.update(1)
                     
                 except Exception as e:
                     logger.warning(f"生成图片失败: {e}")
@@ -411,7 +413,7 @@ def auto_main():
                        help='批次大小')
     parser.add_argument('--learning-rate', type=float, default=0.001,
                        help='学习率')
-    parser.add_argument('--output-dir', type=str, default='training_cycles',
+    parser.add_argument('--output-dir', type=str, default='models/auto',
                        help='输出目录')
     
     args = parser.parse_args()

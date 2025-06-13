@@ -1,0 +1,15 @@
+{
+  "timestamp": "2025-06-13T19:22:06.176351",
+  "input_dir": "/Users/hyx/unet-watermark/data/test",
+  "model_dir": "/Users/hyx/unet-watermark/models/checkpoint",
+  "num_samples": 0,
+  "selected_images": [],
+  "models": {},
+  "summary": {
+    "total_models": 0,
+    "successful_models": 0,
+    "failed_models": 0,
+    "best_detection_model": null,
+    "highest_ratio_model": null
+  }
+}

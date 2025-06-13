@@ -10,11 +10,13 @@ import sys
 import argparse
 import subprocess
 import torch
+import json
 
 from configs.config import get_cfg_defaults, update_config
 from models.unet_model import WatermarkSegmentationModel
 from train import train
 from predict import WatermarkPredictor
+from auto_train import AutoTrainingLoop
 
 
 def setup_device(device_str):
@@ -331,6 +333,60 @@ def repair_command(args):
         raise
 
 
+def auto_train_command(args):
+    """执行自动循环训练命令"""
+    print("=" * 60)
+    print("开始自动循环训练")
+    print("=" * 60)
+    
+    # 设置设备
+    device = setup_device(args.device or 'auto')
+    
+    # 构建配置
+    config = {
+        'project_root': args.project_root or os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        'max_cycles': args.max_cycles,
+        'device': str(device),
+        'epochs': args.epochs,
+        'batch_size': args.batch_size,
+        'learning_rate': args.learning_rate,
+        'output_base_dir': args.output_dir,
+        'train_config': args.config or 'src/configs/unet_watermark.yaml',
+        'model_selection_samples': args.model_selection_samples,
+        'prediction_limit': args.prediction_limit,
+        'transparent_ratio': args.transparent_ratio,
+        'logos_dir': args.logos_dir
+    }
+    
+    # 如果提供了配置文件，加载配置
+    if args.config_file and os.path.exists(args.config_file):
+        with open(args.config_file, 'r') as f:
+            file_config = json.load(f)
+        config.update(file_config)
+    
+    # 打印配置信息
+    print(f"项目根目录: {config['project_root']}")
+    print(f"最大循环次数: {config['max_cycles']}")
+    print(f"训练设备: {config['device']}")
+    print(f"每轮训练轮数: {config['epochs']}")
+    print(f"批次大小: {config['batch_size']}")
+    print(f"学习率: {config['learning_rate']}")
+    print(f"输出目录: {config['output_base_dir']}")
+    print(f"训练配置文件: {config['train_config']}")
+    print()
+    
+    try:
+        # 创建并运行自动训练循环
+        trainer = AutoTrainingLoop(config)
+        trainer.run_all_cycles()
+        
+        print("\n自动循环训练完成！")
+        print(f"结果保存在: {config['output_base_dir']}")
+        
+    except Exception as e:
+        print(f"自动训练过程中出现错误: {str(e)}")
+        raise
+
 
 def main():
     """主函数 - 解析命令行参数并执行相应操作"""
@@ -350,6 +406,11 @@ def main():
   循环修复模式:
     python main.py repair --input data/test --output results --model models/best_model.pth
     python main.py repair --input single_image.jpg --output results --model models/best_model.pth --max-iterations 10
+    
+  自动循环训练模式:
+    python main.py auto-train --max-cycles 10 --device cuda --epochs 50
+    python main.py auto-train --config-file training_config.json --output-dir models/auto
+    python main.py auto-train --batch-size 16 --learning-rate 0.0001 --transparent-ratio 0.7
         """
     )
     
@@ -419,6 +480,33 @@ def main():
     repair_parser.add_argument('--batch-size', type=int, default=10, help='批处理大小（优化模式）')
     repair_parser.add_argument('--pause-interval', type=int, default=50, help='暂停清理间隔（优化模式）')
     
+    # 自动循环训练命令
+    auto_train_parser = subparsers.add_parser('auto', help='自动循环训练')
+    auto_train_parser.add_argument('--config-file', type=str, help='JSON配置文件路径')
+    auto_train_parser.add_argument('--config', type=str, help='训练配置文件路径',
+                                  default='src/configs/unet_watermark.yaml')
+    auto_train_parser.add_argument('--project-root', type=str, help='项目根目录')
+    auto_train_parser.add_argument('--max-cycles', type=int, default=10,
+                                  help='最大循环次数 (默认: 10)')
+    auto_train_parser.add_argument('--device', type=str, default='auto',
+                                  help='训练设备 (默认: auto)')
+    auto_train_parser.add_argument('--epochs', type=int, default=50,
+                                  help='每轮训练的epoch数 (默认: 50)')
+    auto_train_parser.add_argument('--batch-size', type=int, default=8,
+                                  help='批次大小 (默认: 8)')
+    auto_train_parser.add_argument('--learning-rate', type=float, default=0.001,
+                                  help='学习率 (默认: 0.001)')
+    auto_train_parser.add_argument('--output-dir', type=str, default='models/auto',
+                                  help='输出目录 (默认: models/auto)')
+    auto_train_parser.add_argument('--model-selection-samples', type=int, default=1000,
+                                  help='模型选择时的样本数量 (默认: 1000)')
+    auto_train_parser.add_argument('--prediction-limit', type=int, default=100,
+                                  help='预测时的图片数量限制 (默认: 100)')
+    auto_train_parser.add_argument('--transparent-ratio', type=float, default=0.6,
+                                  help='透明水印比例 (默认: 0.6)')
+    auto_train_parser.add_argument('--logos-dir', type=str, default='data/WatermarkDataset/logos',
+                                  help='水印图片目录 (默认: data/WatermarkDataset/logos)')
+    
     # 解析参数
     args = parser.parse_args()
     
@@ -433,6 +521,8 @@ def main():
             train_command(args)
         elif args.command == 'repair':
             repair_command(args)
+        elif args.command == 'auto':
+            auto_train_command(args)
         else:
             parser.print_help()
             

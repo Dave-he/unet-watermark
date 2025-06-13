@@ -5,6 +5,9 @@
 支持训练和预测模式，提供统一的命令行接口
 
 Usage:
+    # 循环模式
+    python main.py --auto
+
     # 训练模式
     python main.py train --config src/configs/unet_watermark.yaml --device cuda
     
@@ -23,11 +26,6 @@ src_path = Path(__file__).parent / "src"
 sys.path.insert(0, str(src_path))
 
 from cli import main
-from auto_train import auto_main
 
 if __name__ == '__main__':
-    # 自动训练模式
-    if '--auto' in sys.argv:
-        auto_main()
-    else:
-        main()
+    main()
