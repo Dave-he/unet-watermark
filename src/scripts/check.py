@@ -2,10 +2,39 @@ import os
 import argparse
 from pathlib import Path
 from collections import defaultdict
+import cv2
+import numpy as np
 
 def get_filename_without_ext(filepath):
     """获取不带扩展名的文件名"""
     return Path(filepath).stem
+
+def is_black_mask(mask_path, threshold=0.01):
+    """检测mask图片是否为全黑或接近全黑
+    
+    Args:
+        mask_path: mask图片路径
+        threshold: 非零像素比例阈值，低于此值认为是全黑
+    
+    Returns:
+        bool: True表示是全黑mask，False表示正常mask
+    """
+    try:
+        # 读取图片
+        img = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+        if img is None:
+            print(f"    [警告] 无法读取mask文件: {mask_path}")
+            return True  # 无法读取的文件也认为是无效的
+        
+        # 计算非零像素的比例
+        total_pixels = img.shape[0] * img.shape[1]
+        non_zero_pixels = np.count_nonzero(img)
+        non_zero_ratio = non_zero_pixels / total_pixels
+        
+        return non_zero_ratio < threshold
+    except Exception as e:
+        print(f"    [警告] 检测mask文件时出错 {mask_path}: {e}")
+        return True  # 出错的文件也认为是无效的
 
 def get_image_files(directory):
     """获取目录中的所有图片文件"""
@@ -72,6 +101,7 @@ def validate_dataset(base_dir, dry_run=False):
     # 分类文件状态
     valid_files = set()  # 有效文件（至少在两个目录中存在）
     invalid_files = defaultdict(list)  # 无效文件（仅在单个目录中存在）
+    black_mask_files = []  # 全黑mask文件
     
     for filename in all_files:
         present_in = []
@@ -89,11 +119,29 @@ def validate_dataset(base_dir, dry_run=False):
             has_clean = "clean" in present_in
             has_masks = "masks" in present_in
             
-            if (has_watermarked and has_clean) or \
-               (has_watermarked and has_masks) or \
-               (has_clean and has_masks):
+            # 如果有mask文件，检查是否为全黑
+            is_valid = True
+            if has_masks and "masks" in existing_dirs:
+                # 查找mask文件的完整路径
+                mask_path = None
+                for ext in ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif']:
+                    potential_path = os.path.join(existing_dirs["masks"], filename + ext)
+                    if os.path.exists(potential_path):
+                        mask_path = potential_path
+                        break
+                
+                if mask_path and is_black_mask(mask_path):
+                    is_valid = False
+                    black_mask_files.append(filename)
+                    # 将所有相关文件标记为无效
+                    for dir_name in present_in:
+                        invalid_files[dir_name].append(filename)
+            
+            if is_valid and ((has_watermarked and has_clean) or \
+                            (has_watermarked and has_masks) or \
+                            (has_clean and has_masks)):
                 valid_files.add(filename)
-            else:
+            elif is_valid:
                 # 理论上不会到这里，但为了安全起见
                 for dir_name in present_in:
                     invalid_files[dir_name].append(filename)
@@ -105,7 +153,19 @@ def validate_dataset(base_dir, dry_run=False):
     # 显示结果
     print(f"\n✓ 有效文件: {len(valid_files)} 个")
     if valid_files:
-        print("  这些文件在至少两个相关目录中都存在对应文件")
+        print("  这些文件在至少两个相关目录中都存在对应文件，且mask不为全黑")
+    
+    # 显示全黑mask文件信息
+    if black_mask_files:
+        print(f"\n⚠ 全黑mask文件: {len(black_mask_files)} 个")
+        print("  这些文件的mask图片为全黑或接近全黑，已标记为无效")
+        if len(black_mask_files) <= 10:
+            for filename in sorted(black_mask_files):
+                print(f"    - {filename}")
+        else:
+            for filename in sorted(black_mask_files)[:10]:
+                print(f"    - {filename}")
+            print(f"    ... 还有 {len(black_mask_files) - 10} 个文件")
     
     # 显示无效文件
     total_invalid = sum(len(files) for files in invalid_files.values())
@@ -193,6 +253,7 @@ def main():
     3. clean + masks (干净图+标注)
     4. 三个目录都有 (完整数据)
   - 仅在单个目录中存在的文件将被标记为无效
+  - mask图片为全黑或接近全黑的文件将被标记为无效
         """
     )
     
