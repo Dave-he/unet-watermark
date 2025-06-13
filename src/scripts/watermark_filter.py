@@ -33,16 +33,28 @@ logger = logging.getLogger(__name__)
 class WatermarkFilter:
     """水印过滤器类"""
     
-    def __init__(self, model_path, config_path=None, device='cpu', watermark_threshold=0.001):
+    def __init__(self, model_path, config_path=None, device='auto', watermark_threshold=0.001):
         """
         初始化水印过滤器
         
         Args:
             model_path (str): 模型文件路径
             config_path (str): 配置文件路径
-            device (str): 设备类型 ('cpu' 或 'cuda')
+            device (str): 设备类型 ('cpu', 'cuda' 或 'auto')
             watermark_threshold (float): 水印面积阈值，低于此值认为没有水印
         """
+        # 设备自动选择
+        if device == 'auto':
+            if torch.cuda.is_available():
+                device = 'cuda'
+                logger.info(f"检测到CUDA可用，自动选择GPU设备")
+            elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+                device = 'mps'
+                logger.info(f"检测到MPS可用，自动选择Apple Silicon GPU")
+            else:
+                device = 'cpu'
+                logger.info(f"未检测到GPU，自动选择CPU设备")
+        
         self.device = torch.device(device)
         self.watermark_threshold = watermark_threshold
         
@@ -73,7 +85,7 @@ class WatermarkFilter:
         model = create_model_from_config(self.cfg)
         
         # 加载权重
-        checkpoint = torch.load(model_path, map_location=self.device)
+        checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
         
         # 处理不同的保存格式
         if 'model_state_dict' in checkpoint:
@@ -269,7 +281,7 @@ def main():
     parser.add_argument('--input_dir', type=str, default='data/train/watermarked', help='输入图像目录')
     parser.add_argument('--model_path', type=str, default='models/unet_watermark.pth', help='模型文件路径')
     parser.add_argument('--config_path', type=str, help='配置文件路径')
-    parser.add_argument('--device', type=str, default='cpu', help='设备类型')
+    parser.add_argument('--device', type=str, default='auto', help='设备类型 (cpu/cuda/mps/auto)')
     parser.add_argument('--threshold', type=float, default=0.0001, help='水印面积阈值')
     parser.add_argument('--backup_dir', type=str, help='备份目录（可选）')
     parser.add_argument('--dry_run', action='store_true', help='试运行模式，不实际删除文件')
