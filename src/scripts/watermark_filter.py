@@ -198,13 +198,13 @@ class WatermarkFilter:
             logger.error(f"检测图像 {image_path} 时出错: {str(e)}")
             return False, 0.0
     
-    def filter_images(self, input_dir, backup_dir=None, dry_run=False):
+    def filter_images(self, input_dir, no_watermark_dir=None, dry_run=False):
         """
-        过滤图像文件夹，删除没有水印的图片
+        过滤图像文件夹，移动没有水印的图片到指定目录
         
         Args:
             input_dir (str): 输入图像目录
-            backup_dir (str): 备份目录（可选）
+            no_watermark_dir (str): 无水印图片移动目录（可选，如不指定则删除）
             dry_run (bool): 是否为试运行模式
             
         Returns:
@@ -220,20 +220,20 @@ class WatermarkFilter:
         
         if not image_files:
             logger.warning(f"在 {input_dir} 中未找到图像文件")
-            return {'total': 0, 'with_watermark': 0, 'without_watermark': 0, 'deleted': 0, 'errors': 0}
+            return {'total': 0, 'with_watermark': 0, 'without_watermark': 0, 'moved': 0, 'errors': 0}
         
         logger.info(f"开始处理 {len(image_files)} 张图片")
         
-        # 创建备份目录
-        if backup_dir and not dry_run:
-            os.makedirs(backup_dir, exist_ok=True)
+        # 创建无水印图片目录
+        if no_watermark_dir and not dry_run:
+            os.makedirs(no_watermark_dir, exist_ok=True)
         
         # 统计信息
         stats = {
             'total': len(image_files),
             'with_watermark': 0,
             'without_watermark': 0,
-            'deleted': 0,
+            'moved': 0,
             'errors': 0
         }
         
@@ -257,18 +257,20 @@ class WatermarkFilter:
                     stats['without_watermark'] += 1
                     
                     if dry_run:
-                        logger.info(f"[试运行] 将删除: {image_path.name} (水印比例: {watermark_ratio:.6f})")
+                        action_text = "移动" if no_watermark_dir else "删除"
+                        logger.info(f"[试运行] 将{action_text}: {image_path.name} (水印比例: {watermark_ratio:.6f})")
                     else:
-                        # 备份文件（如果指定了备份目录）
-                        if backup_dir:
-                            backup_path = os.path.join(backup_dir, image_path.name)
-                            shutil.copy2(str(image_path), backup_path)
-                            logger.info(f"备份到: {backup_path}")
-                        
-                        # 删除文件
-                        os.remove(str(image_path))
-                        stats['deleted'] += 1
-                        logger.info(f"删除: {image_path.name} (水印比例: {watermark_ratio:.6f})")
+                        if no_watermark_dir:
+                            # 移动文件到无水印目录
+                            target_path = os.path.join(no_watermark_dir, image_path.name)
+                            shutil.move(str(image_path), target_path)
+                            stats['moved'] += 1
+                            logger.info(f"移动: {image_path.name} -> {target_path} (水印比例: {watermark_ratio:.6f})")
+                        else:
+                            # 删除文件（保持原有功能）
+                            os.remove(str(image_path))
+                            stats['moved'] += 1  # 使用moved统计删除的文件
+                            logger.info(f"删除: {image_path.name} (水印比例: {watermark_ratio:.6f})")
                 
             except Exception as e:
                 stats['errors'] += 1
@@ -283,7 +285,7 @@ def main():
     parser.add_argument('--config_path', type=str, help='配置文件路径')
     parser.add_argument('--device', type=str, default='auto', help='设备类型 (cpu/cuda/mps/auto)')
     parser.add_argument('--threshold', type=float, default=0.0001, help='水印面积阈值')
-    parser.add_argument('--backup_dir', type=str, help='备份目录（可选）')
+    parser.add_argument('--no_watermark_dir', type=str, help='无水印图片移动目录（可选，如不指定则删除）')
     parser.add_argument('--dry_run', action='store_true', help='试运行模式，不实际删除文件')
     
     args = parser.parse_args()
@@ -315,7 +317,7 @@ def main():
         # 过滤图像
         stats = filter_obj.filter_images(
             input_dir=args.input_dir,
-            backup_dir=args.backup_dir,
+            no_watermark_dir=args.no_watermark_dir,
             dry_run=args.dry_run
         )
         
@@ -325,7 +327,7 @@ def main():
         logger.info(f"总图片数: {stats['total']}")
         logger.info(f"有水印: {stats['with_watermark']}")
         logger.info(f"无水印: {stats['without_watermark']}")
-        logger.info(f"已删除: {stats['deleted']}")
+        logger.info(f"已移动/删除: {stats['moved']}")
         logger.info(f"错误数: {stats['errors']}")
         logger.info("=" * 50)
         
