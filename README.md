@@ -64,9 +64,24 @@ python src/scripts/image_fixer.py data/train
 # 扩充
 python src/scripts/gen_data.py --target_count=80000
 
-#检查
-python src/scripts/check.py # 清理无效文件
-python src/scripts/check.py --delete # 清理无效文件
+
+# 检测模式（只显示无效文件）
+python src/scripts/check.py
+
+# 删除模式（删除无效文件）
+python src/scripts/check.py --delete
+
+# 移动模式（移动无效文件到backup目录）
+python src/scripts/check.py --delete --move-dir backup
+
+# 指定自定义基础目录
+python src/scripts/check.py --base-dir custom
+
+# 将没有水印的图片移动到指定文件夹
+python src/scripts/watermark_filter.py --input_dir /path/to/images --model_path /path/to/model.pth --no_watermark_dir /path/to/no_watermark_folder
+
+# 试运行模式（不实际移动文件）
+python src/scripts/watermark_filter.py --input_dir /path/to/images --model_path /path/to/model.pth --no_watermark_dir /path/to/no_watermark_folder --dry_run
 ```
 
 
