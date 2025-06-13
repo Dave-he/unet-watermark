@@ -13,7 +13,7 @@ import random
 
 # 导入自定义模块
 from configs.config import get_cfg_defaults, update_config
-from models.smp_models import create_model_from_config
+from models.unet_model import create_model_from_config
 from utils.dataset import get_val_transform
 
 # 设置日志

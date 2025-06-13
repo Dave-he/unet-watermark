@@ -20,7 +20,7 @@ from datetime import datetime
 # 添加项目根目录到路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from predict_smp import WatermarkPredictor
+from predict import WatermarkPredictor
 from configs.config import get_cfg_defaults, update_config
 
 # 设置日志

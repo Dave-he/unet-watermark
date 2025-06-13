@@ -10,7 +10,7 @@ from datetime import datetime
 
 # 导入自定义模块
 from configs.config import get_cfg_defaults, update_config
-from models.smp_models import create_model_from_config
+from models.unet_model import create_model_from_config
 from utils.dataset import create_datasets
 from utils.losses import get_loss_function
 from utils.metrics import get_metrics, dice_coef

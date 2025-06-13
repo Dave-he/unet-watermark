@@ -23,6 +23,11 @@ src_path = Path(__file__).parent / "src"
 sys.path.insert(0, str(src_path))
 
 from cli import main
+from auto_train import auto_main
 
 if __name__ == '__main__':
-    main()
+    # 自动训练模式
+    if '--auto' in sys.argv:
+        auto_main()
+    else:
+        main()

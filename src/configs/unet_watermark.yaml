@@ -34,8 +34,8 @@ DATA:
 # 训练配置
 TRAIN:
   BATCH_SIZE: 8  # 适当减小批次大小，提高训练稳定性
-  EPOCHS: 50     # 增加训练轮数
-  LR: 0.00005
+  EPOCHS: 1000     # 增加训练轮数
+  LR: 0.005
   WEIGHT_DECAY: 0.0001
   OUTPUT_DIR: "logs/output"
   MODEL_SAVE_PATH: "models/unet_watermark.pth"

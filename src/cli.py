@@ -12,9 +12,9 @@ import subprocess
 import torch
 
 from configs.config import get_cfg_defaults, update_config
-from models.smp_models import WatermarkSegmentationModel
-from train_smp import train
-from predict_smp import WatermarkPredictor
+from models.unet_model import WatermarkSegmentationModel
+from train import train
+from predict import WatermarkPredictor
 
 
 def setup_device(device_str):
@@ -210,7 +210,11 @@ def predict_command(args):
 
 
 def repair_command(args):
-    """修复命令"""
+    """文件夹修复命令"""
+    print("=" * 60)
+    print("开始文件夹水印修复")
+    print("=" * 60)
+    
     # 验证参数
     if not os.path.exists(args.input):
         print(f"错误: 输入路径不存在: {args.input}")
@@ -218,6 +222,10 @@ def repair_command(args):
     
     if not os.path.exists(args.model):
         print(f"错误: 模型文件不存在: {args.model}")
+        return
+    
+    if not os.path.isdir(args.input):
+        print(f"错误: 输入路径必须是文件夹: {args.input}")
         return
     
     # 设置设备
@@ -234,60 +242,19 @@ def repair_command(args):
         print("请运行: pip install iopaint")
         return
     
-    # 检查是否使用优化模式
-    use_optimizer = getattr(args, 'optimize', False)
-    use_folder_mode = getattr(args, 'folder_mode', False)
+    print(f"输入文件夹: {args.input}")
+    print(f"输出文件夹: {args.output}")
+    print(f"模型路径: {args.model}")
+    print(f"最大迭代次数: {args.max_iterations}")
+    print(f"水印阈值: {args.watermark_threshold}")
+    print(f"IOPaint模型: {args.iopaint_model}")
+    if hasattr(args, 'limit') and args.limit:
+        print(f"处理图片限制: {args.limit} 张")
+    if getattr(args, 'generate_video', False):
+        print(f"生成对比视频: 是 ({args.video_width}x{args.video_height}, {args.fps}fps, {args.duration}s/图)")
+    print()
     
-    if use_optimizer:
-        print("使用优化批处理模式...")
-        from scripts.batch_repair_optimizer import BatchRepairOptimizer
-        from utils.cuda_monitor import cuda_memory_context, log_memory_usage
-        
-        # 记录初始内存状态
-        log_memory_usage("开始处理前 - ")
-        
-        # 使用CUDA内存管理上下文
-        with cuda_memory_context(monitor=True) as monitor:
-            # 创建优化器
-            optimizer = BatchRepairOptimizer(
-                model_path=args.model,
-                config_path=getattr(args, 'config', None),
-                device=device
-            )
-            
-            # 执行优化处理
-            results = optimizer.process_batch_with_optimization(
-                input_path=args.input,
-                output_dir=args.output,
-                max_iterations=getattr(args, 'max_iterations', 5),
-                watermark_threshold=getattr(args, 'watermark_threshold', 0.01),
-                iopaint_model=getattr(args, 'iopaint_model', 'lama'),
-                limit=getattr(args, 'limit', None),
-                batch_size=getattr(args, 'batch_size', 10),
-                pause_interval=getattr(args, 'pause_interval', 50)
-            )
-            
-            # 记录内存使用摘要
-            if monitor:
-                memory_summary = monitor.get_memory_summary()
-                print("\n内存使用摘要:")
-                if 'current' in memory_summary:
-                    current = memory_summary['current']
-                    print(f"  当前GPU内存: {current.get('gpu_allocated_gb', 0):.2f}GB (分配) / "
-                          f"{current.get('gpu_reserved_gb', 0):.2f}GB (保留)")
-                    print(f"  当前系统内存: {current.get('ram_percent', 0):.1f}%")
-                
-                if 'statistics' in memory_summary:
-                    stats = memory_summary['statistics']
-                    print(f"  峰值GPU内存: {stats.get('gpu_allocated_max_gb', 0):.2f}GB (分配) / "
-                          f"{stats.get('gpu_reserved_max_gb', 0):.2f}GB (保留)")
-        
-        # 保存结果摘要
-        summary_path = os.path.join(args.output, 'optimized_repair_summary.json')
-        
-    elif use_folder_mode and os.path.isdir(args.input):
-        print("使用文件夹迭代处理模式...")
-        
+    try:
         # 加载配置
         config_path = getattr(args, 'config', None)
         if config_path and not os.path.exists(config_path):
@@ -301,16 +268,17 @@ def repair_command(args):
             device=device
         )
         
-        # 使用新的文件夹迭代处理方法
+        # 执行文件夹迭代修复
         results = predictor.process_folder_iterative(
             input_folder=args.input,
             output_folder=args.output,
-            max_iterations=getattr(args, 'max_iterations', 5),
-            watermark_threshold=getattr(args, 'watermark_threshold', 0.01),
-            iopaint_model=getattr(args, 'iopaint_model', 'lama')
+            max_iterations=args.max_iterations,
+            watermark_threshold=args.watermark_threshold,
+            iopaint_model=args.iopaint_model,
+            limit=getattr(args, 'limit', None)
         )
         
-        print("\n文件夹迭代修复完成！")
+        print("\n文件夹修复完成！")
         print(f"总图片数: {results.get('total_images', 0)}")
         print(f"成功处理: {results.get('successful', 0)}")
         print(f"部分处理: {results.get('partial', 0)}")
@@ -318,86 +286,50 @@ def repair_command(args):
         print(f"平均迭代次数: {results.get('average_iterations', 0)}")
         
         # 保存结果摘要
-        summary_path = os.path.join(args.output, 'folder_repair_summary.json')
-        
-    else:
-        print("使用标准处理模式...")
-        
-        # 加载配置
-        config_path = getattr(args, 'config', None)
-        if config_path and not os.path.exists(config_path):
-            print(f"警告: 配置文件不存在: {config_path}，使用默认配置")
-            config_path = None
-        
-        # 创建预测器
-        predictor = WatermarkPredictor(
-            model_path=args.model,
-            config_path=config_path,
-            device=device
-        )
-        
-        # 覆盖阈值（如果指定）
-        if hasattr(args, 'watermark_threshold') and args.watermark_threshold is not None:
-            predictor.watermark_threshold = args.watermark_threshold
-        
-        # 执行修复
-        results = predictor.process_batch_iterative(
-            input_path=args.input,
-            output_dir=args.output,
-            max_iterations=getattr(args, 'max_iterations', 10),
-            watermark_threshold=getattr(args, 'watermark_threshold', 1e-6),
-            iopaint_model=getattr(args, 'iopaint_model', 'lama'),
-            limit=getattr(args, 'limit', None)
-        )
-        
-        # 保存结果摘要
         summary_path = os.path.join(args.output, 'repair_summary.json')
-    
-    # 保存结果
-    import json
-    with open(summary_path, 'w', encoding='utf-8') as f:
-        json.dump(results, f, indent=2, ensure_ascii=False)
-    
-    print(f"\n修复完成！结果摘要已保存: {summary_path}")
-    
-    # 检查是否需要生成视频
-    if getattr(args, 'generate_video', False):
-        print("开始生成对比视频...")
-        try:
-            from scripts.video_generator import VideoGenerator
-            
-            # 检查mask目录
-            mask_dir = os.path.join(args.output, 'masks')
-            if not os.path.exists(mask_dir):
-                mask_dir = None
-            
-            # 创建视频生成器
-            generator = VideoGenerator(
-                input_dir=args.input,
-                repair_dir=args.output,
-                output_dir=args.output,
-                mask_dir=mask_dir,
-                width=getattr(args, 'video_width', 1920),
-                height=getattr(args, 'video_height', 1080),
-                duration_per_image=getattr(args, 'duration', 2.0),
-                fps=getattr(args, 'fps', 30)
-            )
-            
-            # 根据是否有mask选择视频类型
-            if mask_dir:
-                video_path = generator.create_three_way_comparison_video()
-                print(f"三路对比视频已生成: {video_path}")
-            else:
-                video_path = generator.create_side_by_side_video()
-                print(f"并排对比视频已生成: {video_path}")
+        with open(summary_path, 'w', encoding='utf-8') as f:
+            json.dump(results, f, indent=2, ensure_ascii=False)
+        
+        print(f"\n结果摘要已保存: {summary_path}")
+        
+        # 检查是否需要生成视频
+        if getattr(args, 'generate_video', False):
+            print("开始生成对比视频...")
+            try:
+                from scripts.video_generator import VideoGenerator
                 
-        except Exception as e:
-            print(f"视频生成失败: {str(e)}")
-    
-    # 记录最终内存状态
-    if device == 'cuda':
-        from utils.cuda_monitor import log_memory_usage
-        log_memory_usage("处理完成后 - ")
+                # 检查mask目录
+                mask_dir = os.path.join(args.output, 'masks')
+                if not os.path.exists(mask_dir):
+                    mask_dir = None
+                
+                # 创建视频生成器
+                generator = VideoGenerator(
+                    input_dir=args.input,
+                    repair_dir=args.output,
+                    output_dir=args.output,
+                    mask_dir=mask_dir,
+                    width=getattr(args, 'video_width', 1920),
+                    height=getattr(args, 'video_height', 1080),
+                    duration_per_image=getattr(args, 'duration', 2.0),
+                    fps=getattr(args, 'fps', 30)
+                )
+                
+                # 根据是否有mask选择视频类型
+                if mask_dir:
+                    video_path = generator.create_three_way_comparison_video()
+                    print(f"三路对比视频已生成: {video_path}")
+                else:
+                    video_path = generator.create_side_by_side_video()
+                    print(f"并排对比视频已生成: {video_path}")
+                    
+            except Exception as e:
+                print(f"视频生成失败: {str(e)}")
+        
+    except Exception as e:
+        print(f"修复过程中出现错误: {str(e)}")
+        raise
+
 
 
 def main():
@@ -447,38 +379,9 @@ def main():
     train_parser.add_argument('--resume', type=str,
                              help='从指定的checkpoint文件恢复训练')
     
-    # 预测命令
-    predict_parser = subparsers.add_parser('predict', help='预测/推理')
-    predict_parser.add_argument('--input', type=str, default= 'data/test',
-                               help='输入图像路径或目录')
-    predict_parser.add_argument('--output', type=str, default='data/result',
-                               help='输出目录')
-    predict_parser.add_argument('--model', type=str, default='models/',
-                               help='模型文件路径')
-    predict_parser.add_argument('--config', type=str, help='配置文件路径')
-    predict_parser.add_argument('--device', type=str, 
-                               default='auto', help='计算设备 (默认: auto)')
-    predict_parser.add_argument('--threshold', type=float, default=0.3, 
-                               help='二值化阈值 (默认: 0.3)')
-    predict_parser.add_argument('--save-mask', action='store_true', default=True,
-                               help='保存预测掩码')
-    predict_parser.add_argument('--save-overlay', action='store_true', 
-                               help='保存叠加可视化图像')
-    predict_parser.add_argument('--limit', type=int, 
-                               help='随机选择的图片数量限制')
-    predict_parser.add_argument('--iopaint-model', type=str, default='lama',
-                               help='IOPaint修复模型 (默认: lama)')
-    
-    # 新增文件夹迭代模式参数
-    predict_parser.add_argument('--folder-mode', action='store_true',
-                               help='启用文件夹迭代处理模式')
-    predict_parser.add_argument('--max-iterations', type=int, default=5,
-                               help='最大迭代次数 (文件夹模式, 默认: 5)')
-    predict_parser.add_argument('--watermark-threshold', type=float, default=0.01,
-                               help='水印面积阈值 (文件夹模式, 默认: 0.01)')
-    
     # 循环修复命令
     repair_parser = subparsers.add_parser('repair', help='循环检测和修复水印')
+    
     repair_parser.add_argument('--input', type=str, default='/Users/hyx/Pictures/image',
                               help='输入图像路径或目录')
     repair_parser.add_argument('--output', type=str, default='data/result',
@@ -528,8 +431,6 @@ def main():
     try:
         if args.command == 'train':
             train_command(args)
-        elif args.command == 'predict':
-            predict_command(args)
         elif args.command == 'repair':
             repair_command(args)
         else:

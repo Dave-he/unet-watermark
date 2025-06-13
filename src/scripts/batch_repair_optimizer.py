@@ -18,7 +18,7 @@ from typing import List, Dict, Tuple
 src_path = Path(__file__).parent.parent
 sys.path.insert(0, str(src_path))
 
-from predict_smp import WatermarkPredictor
+from predict import WatermarkPredictor
 from configs.config import get_cfg_defaults, update_config
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
