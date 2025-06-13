@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-自动循环训练脚本 - 直接调用方法版本
+自动循环训练脚本
 实现模型选择 -> 训练 -> 预测 -> 数据扩充的循环流程
 """
 
@@ -16,6 +16,7 @@ import shutil
 import glob
 import random
 import numpy as np
+from typing import Dict, Optional, Any, List
 
 # 添加项目根目录到路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

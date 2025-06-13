@@ -1,7 +1,12 @@
 # -*- coding: utf-8 -*-
-# @Time    : 2023/3/23 14:46
+"""
+损失函数模块
+提供各种分割任务的损失函数，支持组合损失
+"""
+
 import torch.nn as nn
 import segmentation_models_pytorch as smp
+from typing import List, Optional
 
 def get_loss_function(cfg):
     """根据配置获取损失函数"""

@@ -1,3 +1,9 @@
+# -*- coding: utf-8 -*-
+"""
+图片修复工具
+用于检测和修复损坏的图片文件
+"""
+
 import os
 import cv2
 import numpy as np
@@ -9,6 +15,7 @@ from pathlib import Path
 import io
 import warnings
 from contextlib import redirect_stderr
+from typing import List, Optional, Tuple, Dict, Any
 
 # 不允许加载截断的图片，这样可以更好地检测损坏
 ImageFile.LOAD_TRUNCATED_IMAGES = False

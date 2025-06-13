@@ -1,3 +1,9 @@
+# -*- coding: utf-8 -*-
+"""
+Mask增强工具
+用于对分割mask进行边框圆滑模糊放大处理
+"""
+
 import cv2
 import numpy as np
 import os
@@ -5,8 +11,10 @@ from pathlib import Path
 from scipy import ndimage
 from tqdm import tqdm
 from shutil import copy
+from typing import Optional
 
-def enhance_mask(mask_path, output_path, expand_pixels=10, blur_kernel=15, smooth_iterations=2):
+def enhance_mask(mask_path: str, output_path: str, expand_pixels: int = 10, 
+                blur_kernel: int = 15, smooth_iterations: int = 2) -> None:
     """
     对mask进行边框圆滑模糊放大处理
     

@@ -1,3 +1,9 @@
+# -*- coding: utf-8 -*-
+"""
+预测模块
+提供水印检测和修复功能
+"""
+
 import os
 import cv2
 import torch
@@ -10,6 +16,7 @@ import logging
 from pathlib import Path
 import shutil
 import random
+from typing import Tuple, Optional, Dict, Any, List
 
 # 导入自定义模块
 from configs.config import get_cfg_defaults, update_config

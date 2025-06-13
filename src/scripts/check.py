@@ -1,3 +1,9 @@
+# -*- coding: utf-8 -*-
+"""
+数据集检查工具
+用于验证训练数据集的完整性和一致性
+"""
+
 import os
 import argparse
 from pathlib import Path
@@ -5,12 +11,13 @@ from collections import defaultdict
 import cv2
 import numpy as np
 import shutil
+from typing import Set, Dict, Optional
 
-def get_filename_without_ext(filepath):
+def get_filename_without_ext(filepath: str) -> str:
     """获取不带扩展名的文件名"""
     return Path(filepath).stem
 
-def is_black_mask(mask_path, threshold=0.01):
+def is_black_mask(mask_path: str, threshold: float = 0.01) -> bool:
     """检测mask图片是否为全黑或接近全黑
     
     Args:
@@ -37,7 +44,7 @@ def is_black_mask(mask_path, threshold=0.01):
         print(f"    [警告] 检测mask文件时出错 {mask_path}: {e}")
         return True  # 出错的文件也认为是无效的
 
-def get_image_files(directory):
+def get_image_files(directory: str) -> Set[str]:
     """获取目录中的所有图片文件"""
     if not os.path.exists(directory):
         return set()
@@ -51,7 +58,7 @@ def get_image_files(directory):
     
     return files
 
-def validate_dataset(base_dir, dry_run=False, move_dir=None):
+def validate_dataset(base_dir: str, dry_run: bool = False, move_dir: Optional[str] = None) -> None:
     """
     验证数据集的完整性，检查三个目录之间的对应关系
     

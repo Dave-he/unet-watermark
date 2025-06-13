@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # 深度学习框架
 torch>=1.9.0
 torchvision>=0.10.0
@@ -23,5 +24,11 @@ yacs>=0.1.8
 tqdm>=4.62.0
 matplotlib>=3.5.0
 
-# 开发和调试
-#logging>=0.4.9.6
+# 系统监控
+psutil>=5.8.0
+
+# 表格显示
+tabulate>=0.8.9
+
+# 科学计算
+scipy>=1.7.0

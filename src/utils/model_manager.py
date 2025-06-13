@@ -1,10 +1,17 @@
+# -*- coding: utf-8 -*-
+"""
+模型管理工具
+用于列出、比较和管理训练好的模型检查点
+"""
+
 import os
 import torch
 import argparse
 from pathlib import Path
 from tabulate import tabulate
+from typing import List, Dict, Any, Optional
 
-def list_checkpoints(checkpoint_dir):
+def list_checkpoints(checkpoint_dir: str) -> None:
     """列出所有检查点"""
     if not os.path.exists(checkpoint_dir):
         print(f"检查点目录不存在: {checkpoint_dir}")
@@ -32,7 +39,7 @@ def list_checkpoints(checkpoint_dir):
     else:
         print("未找到有效的检查点文件")
 
-def compare_models(model_paths):
+def compare_models(model_paths: List[str]) -> None:
     """比较多个模型的性能"""
     models_info = []
     
@@ -61,7 +68,7 @@ def compare_models(model_paths):
     else:
         print("未找到有效的模型文件")
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description='模型管理工具')
     parser.add_argument('--list', type=str, help='列出指定目录下的所有检查点')
     parser.add_argument('--compare', nargs='+', help='比较多个模型的性能')

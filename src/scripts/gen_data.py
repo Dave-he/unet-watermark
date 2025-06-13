@@ -1,3 +1,9 @@
+# -*- coding: utf-8 -*-
+"""
+数据生成模块
+用于生成带水印的训练数据和对应的掩码
+"""
+
 import os
 import random
 import numpy as np
@@ -6,6 +12,7 @@ import cv2
 from tqdm import tqdm
 import argparse
 import hashlib
+from typing import List, Tuple, Optional
 
 def load_watermarks(logos_dir):
     """加载所有水印图片"""

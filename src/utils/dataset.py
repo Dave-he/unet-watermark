@@ -10,9 +10,7 @@ from PIL import Image
 import logging
 import warnings
 import contextlib
-import sys
-import os
-from tqdm import tqdm  # 添加这行导入
+from tqdm import tqdm
 
 # 添加日志配置
 logging.basicConfig(level=logging.INFO)

@@ -16,6 +16,7 @@ import argparse
 import sys
 import locale
 from tqdm import tqdm
+from typing import Optional, List, Tuple, Dict, Any
 
 
 # 设置日志
@@ -25,8 +26,8 @@ logger = logging.getLogger(__name__)
 class VideoGenerator:
     """视频生成器类"""
     
-    def __init__(self, input_dir, repair_dir, output_dir, mask_dir=None, width=640, height=480, 
-                 duration_per_image=2.0, fps=30):
+    def __init__(self, input_dir: str, repair_dir: str, output_dir: str, mask_dir: Optional[str] = None, 
+                 width: int = 640, height: int = 480, duration_per_image: float = 2.0, fps: int = 30) -> None:
         """
         初始化视频生成器
         

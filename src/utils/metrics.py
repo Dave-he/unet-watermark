@@ -1,4 +1,12 @@
+# -*- coding: utf-8 -*-
+"""
+评估指标模块
+提供各种分割任务的评估指标计算函数
+"""
+
+import torch
 import segmentation_models_pytorch as smp
+from typing import Dict, Any
 
 def get_metrics():
     """获取评估指标 - 使用新的函数式API"""

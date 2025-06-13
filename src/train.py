@@ -1,3 +1,9 @@
+# -*- coding: utf-8 -*-
+"""
+训练模块
+提供模型训练、验证和早停机制
+"""
+
 import os
 import torch
 import torch.optim as optim
@@ -7,6 +13,7 @@ import matplotlib.pyplot as plt
 import argparse
 import logging
 from datetime import datetime
+from typing import Dict, Tuple, Any, Optional
 
 # 导入自定义模块
 from configs.config import get_cfg_defaults, update_config
@@ -14,10 +21,6 @@ from models.unet_model import create_model_from_config
 from utils.dataset import create_datasets
 from utils.losses import get_loss_function
 from utils.metrics import get_metrics, dice_coef
-import torch.cuda.amp as amp
-# 修改第18行的导入
-# 第18行 - 保持原有导入或改为新导入
-from torch.cuda.amp import autocast, GradScaler
 
 # 设置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -55,13 +58,12 @@ class EarlyStopping:
         self.best_weights = model.state_dict().copy()
 
 def train_epoch(model, train_loader, criterion, optimizer, device, metrics, cfg, scheduler=None):
-    """优化后的训练函数"""
+    """训练一个epoch"""
     model.train()
     total_loss = 0.0
     metric_values = {'iou': 0.0, 'f1': 0.0, 'accuracy': 0.0, 'recall': 0.0, 'precision': 0.0}
     
-    # 混合精度训练 - 使用新的统一 API
-    # 混合精度训练 - 移除 device 参数
+    # 混合精度训练
     scaler = torch.GradScaler() if device.type == 'cuda' else None
     
     # 减少指标计算频率
@@ -75,7 +77,7 @@ def train_epoch(model, train_loader, criterion, optimizer, device, metrics, cfg,
         
         optimizer.zero_grad()
         
-        # 混合精度前向传播 - 使用新的API
+        # 前向传播
         if scaler:
             with torch.autocast(device_type="cuda"):
                 outputs = model(images)
