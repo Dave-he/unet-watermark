@@ -152,15 +152,21 @@ class AutoTrainingLoop:
             else:
                 logger.warning(f"配置文件不存在: {config_path}，使用默认配置")
             
+            # 解冻配置以允许修改
+            cfg.defrost()
+            
             # 更新配置参数
             cfg.DEVICE = self.config.get('device', 'cpu')
             cfg.TRAIN.EPOCHS = self.config.get('epochs', 50)
             cfg.TRAIN.BATCH_SIZE = self.config.get('batch_size', 8)
             cfg.TRAIN.LR = self.config.get('learning_rate', 0.001)
             
-            # 禁用早停（除了第一轮）
-            if self.current_cycle > 1:
-                cfg.TRAIN.USE_EARLY_STOPPING = False
+            # 保持早停机制启用（所有轮次都使用早停）
+            # if self.current_cycle > 1:
+            #     cfg.TRAIN.USE_EARLY_STOPPING = False
+            
+            # 重新冻结配置
+            cfg.freeze()
             
             # 直接调用训练函数
             train(cfg, resume_from=resume_model)
