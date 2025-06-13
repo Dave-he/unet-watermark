@@ -140,7 +140,7 @@ class AutoTrainingLoop:
             return self._find_latest_checkpoint()
     
     def step2_training(self, cycle_output_dir, resume_model=None):
-        """步骤2: 模型训练"""
+        """步骤2: 从检查点继续训练指定轮数"""
         logger.info(f"=== 第{self.current_cycle}轮 - 步骤2: 模型训练 ===")
         
         try:
@@ -158,7 +158,24 @@ class AutoTrainingLoop:
             
             # 更新配置参数
             cfg.DEVICE = self.config.get('device', 'cpu')
-            cfg.TRAIN.EPOCHS = self.config.get('epochs', 50)
+            
+            # 从配置中获取要训练的轮数，默认为10轮
+            additional_epochs = self.config.get('epochs', 10)
+            
+            # 如果有检查点，从检查点继续训练
+            if resume_model and os.path.exists(resume_model):
+                logger.info(f"从检查点 {resume_model} 继续训练 {additional_epochs} 轮")
+                # 加载检查点获取当前epoch
+                import torch
+                checkpoint = torch.load(resume_model, map_location='cpu', weights_only=False)
+                current_epoch = checkpoint.get('epoch', 0)
+                target_epochs = current_epoch + additional_epochs
+                logger.info(f"当前epoch: {current_epoch}, 目标epoch: {target_epochs}")
+            else:
+                target_epochs = additional_epochs
+                logger.info(f"从头开始训练 {target_epochs} 轮")
+            
+            cfg.TRAIN.EPOCHS = target_epochs
             cfg.TRAIN.BATCH_SIZE = self.config.get('batch_size', 8)
             cfg.TRAIN.LR = self.config.get('learning_rate', 0.001)
             
@@ -209,12 +226,13 @@ class AutoTrainingLoop:
             if len(test_images) > limit:
                 test_images = random.sample(test_images, limit)
             
-            # 执行预测
-            results = predictor.batch_repair_folder(
-                input_dir=self.test_data_dir,
-                output_dir=prediction_dir,
+            # 执行预测 - 使用正确的方法名
+            results = predictor.process_folder_iterative(
+                input_folder=self.test_data_dir,
+                output_folder=prediction_dir,
                 max_iterations=3,
-                watermark_threshold=0.1
+                watermark_threshold=0.1,
+                limit=limit
             )
             
             logger.info(f"预测完成，处理了 {len(test_images)} 张图片")
