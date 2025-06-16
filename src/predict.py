@@ -489,7 +489,7 @@ class WatermarkPredictor:
                         pass
                     del info['mask_path']
     
-    def batch_remove_watermark_with_iopaint(self, input_dir, mask_dir, output_dir, model_name='lama', timeout=600):
+    def batch_remove_watermark_with_iopaint(self, input_dir, mask_dir, output_dir, model_name='lama', timeout=600, repeat_time=3):
         """使用iopaint批量去除水印"""
         try:
             # 准备iopaint批量命令
@@ -504,7 +504,8 @@ class WatermarkPredictor:
             
             # 运行iopaint批量处理
             logger.info(f"执行IOPaint批量命令: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=timeout)
+            for i in range(repeat_time) :
+                result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=timeout)
             
             # 检查输出目录是否有文件生成
             output_files = [f for f in os.listdir(output_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]

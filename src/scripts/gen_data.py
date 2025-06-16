@@ -65,8 +65,57 @@ def resize_watermark(watermark, target_size, min_scale=0.05, max_scale=0.3):
     
     return watermark.resize((new_width, new_height), Image.Resampling.LANCZOS)
 
-def apply_watermark_effects(watermark, enhance_transparent=True):
-    """对水印应用随机效果，特别针对透明水印优化"""
+def apply_watermark_effects(watermark, enhance_transparent=True, target_size=None):
+    """对水印应用随机效果，包括大小变换和形变，特别针对透明水印优化"""
+    # 1. 大小变换：调整为原图的5%-30%
+    if target_size is not None:
+        scale = random.uniform(0.05, 0.3)
+        new_width = int(target_size[0] * scale)
+        new_height = int(watermark.height * new_width / watermark.width)
+        
+        # 确保高度不超过限制
+        if new_height > target_size[1] * 0.3:
+            new_height = int(target_size[1] * 0.3)
+            new_width = int(watermark.width * new_height / watermark.height)
+        
+        watermark = watermark.resize((new_width, new_height), Image.Resampling.LANCZOS)
+    
+    # 2. 形变效果：随机拉升变形
+    if random.random() < 0.7:  # 70%概率应用形变
+        # 水平拉升
+        h_stretch = random.uniform(0.8, 1.3)
+        # 垂直拉升
+        v_stretch = random.uniform(0.8, 1.3)
+        
+        new_w = int(watermark.width * h_stretch)
+        new_h = int(watermark.height * v_stretch)
+        watermark = watermark.resize((new_w, new_h), Image.Resampling.LANCZOS)
+        
+        # 随机旋转（小角度）
+        if random.random() < 0.5:
+            angle = random.uniform(-15, 15)
+            watermark = watermark.rotate(angle, expand=True, fillcolor=(0, 0, 0, 0))
+        
+        # 随机倾斜变换
+        if random.random() < 0.4:
+            # 使用仿射变换进行倾斜
+            import cv2
+            watermark_array = np.array(watermark)
+            h, w = watermark_array.shape[:2]
+            
+            # 创建倾斜变换矩阵
+            shear_x = random.uniform(-0.2, 0.2)
+            shear_y = random.uniform(-0.2, 0.2)
+            
+            M = np.array([[1, shear_x, 0],
+                         [shear_y, 1, 0]], dtype=np.float32)
+            
+            watermark_array = cv2.warpAffine(watermark_array, M, (w, h), 
+                                           borderMode=cv2.BORDER_CONSTANT, 
+                                           borderValue=(0, 0, 0, 0))
+            watermark = Image.fromarray(watermark_array)
+    
+    # 3. 透明度设置
     if enhance_transparent:
         # 为透明水印使用更低的透明度范围，增加难度
         alpha = random.uniform(0.1, 0.5)  # 降低最小透明度
@@ -74,6 +123,7 @@ def apply_watermark_effects(watermark, enhance_transparent=True):
         # 普通水印透明度
         alpha = random.uniform(0.3, 0.9)
     
+    # 4. 颜色效果调整
     # 更激进的亮度调整，模拟不同光照条件
     brightness = random.uniform(0.5, 1.5)  # 扩大范围
     enhancer = ImageEnhance.Brightness(watermark)
@@ -89,7 +139,7 @@ def apply_watermark_effects(watermark, enhance_transparent=True):
     enhancer = ImageEnhance.Color(watermark)
     watermark = enhancer.enhance(saturation)
     
-    # 应用透明度
+    # 5. 应用透明度
     if watermark.mode != 'RGBA':
         watermark = watermark.convert('RGBA')
     
@@ -105,11 +155,8 @@ def generate_watermarked_image(clean_image_path, watermark_path, enhance_transpa
     clean_img = Image.open(clean_image_path).convert('RGB')
     watermark = Image.open(watermark_path).convert('RGBA')
     
-    # 调整水印大小
-    watermark_resized = resize_watermark(watermark, clean_img.size)
-    
-    # 应用水印效果，传递 enhance_transparent 参数
-    watermark_resized = apply_watermark_effects(watermark_resized, enhance_transparent)
+    # 应用水印效果，包括大小调整和形变，传递target_size参数
+    watermark_resized = apply_watermark_effects(watermark, enhance_transparent, target_size=clean_img.size)
     
     # 随机位置放置水印
     max_x = clean_img.width - watermark_resized.width
