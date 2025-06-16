@@ -617,12 +617,14 @@ def main():
     )
     
     # 必需参数
-    parser.add_argument('--input', '-i', type=str, default='/Users/hyx/Pictures/image2',
+    parser.add_argument('--input', '-i', type=str, default='/Users/hyx/Pictures/image',
                        help='原图目录路径')
     parser.add_argument('--repair', '-r', type=str, default='data/result',
                        help='修复图目录路径')
     parser.add_argument('--output', '-o', type=str, default='data/video',
                        help='视频输出目录')
+    parser.add_argument('--mask', type=str, default='data/result/mask',
+                       help='修复图mask输出目录')
     
     # 可选参数
     parser.add_argument('--mode', '-m', type=str, choices=['switch', 'sidebyside'], 
@@ -675,6 +677,7 @@ def main():
             input_dir=args.input,
             repair_dir=args.repair,
             output_dir=args.output,
+            mask_dir=args.mask,
             width=args.width,
             height=args.height,
             duration_per_image=args.duration,

@@ -120,6 +120,12 @@ python main.py repair --input data/train/watermarked --output data/result \
   --model models/unet_watermark.pth \
   --iopaint-model lama \
   --limit 100 --generate-video
+
+
+python main.py repair --input /Users/hyx/Pictures/image --output data/result \
+  --model models/unet_watermark.pth \
+  --iopaint-model lama \
+  --limit 100 --generate-video
 ```
 
 ## 3. 评估
