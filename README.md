@@ -64,6 +64,9 @@ python src/scripts/image_fixer.py data/train
 # 扩充
 python src/scripts/gen_data.py --target_count=80000
 
+#车标logo
+ python logo_placement.py --logo logo.png --part part.png --output result.png
+
 
 # 检测模式（只显示无效文件）
 python src/scripts/check.py
