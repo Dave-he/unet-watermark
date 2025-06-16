@@ -260,8 +260,8 @@ class AutoTrainingLoop:
             if current_count == 0:
                 current_count = 1000  # 默认初始数量
             
-            # 计算需要增加的数量（10%）
-            augment_count = max(100, int(current_count * 0.1))
+            # 计算需要增加的数量（20%）
+            augment_count = max(100, int(current_count * 0.2))
             target_count = current_count + augment_count
             
             logger.info(f"当前数据集大小: {current_count}, 目标大小: {target_count}")
