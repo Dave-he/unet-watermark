@@ -487,8 +487,8 @@ def main():
     auto_train_parser.add_argument('--config', type=str, help='训练配置文件路径',
                                   default='src/configs/unet_watermark.yaml')
     auto_train_parser.add_argument('--project-root', type=str, help='项目根目录')
-    auto_train_parser.add_argument('--max-cycles', type=int, default=10,
-                                  help='最大循环次数 (默认: 10)')
+    auto_train_parser.add_argument('--max-cycles', type=int, default=100,
+                                  help='最大循环次数 (默认: 100)')
     auto_train_parser.add_argument('--device', type=str, default='auto',
                                   help='训练设备 (默认: auto)')
     auto_train_parser.add_argument('--epochs', type=int, default=50,
