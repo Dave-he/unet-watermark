@@ -54,11 +54,14 @@ def detect_features(logo, part, method='SIFT'):
     for current_method in methods:
         try:
             if current_method == 'SIFT':
-                detector = cv2.SIFT_create(nfeatures=2000, contrastThreshold=0.03, edgeThreshold=15)
+                # 降低灵敏度：提高对比度阈值和边缘阈值
+                detector = cv2.SIFT_create(nfeatures=1500, contrastThreshold=0.08, edgeThreshold=25)
             elif current_method == 'SURF':
-                detector = cv2.SURF_create(hessianThreshold=200)
+                # 提高Hessian阈值以降低灵敏度
+                detector = cv2.SURF_create(hessianThreshold=400)
             elif current_method == 'ORB':
-                detector = cv2.ORB_create(nfeatures=2000, scaleFactor=1.2, nlevels=8)
+                # 减少特征点数量，降低灵敏度
+                detector = cv2.ORB_create(nfeatures=1500, scaleFactor=1.3, nlevels=6)
             else:
                 continue
             
@@ -86,9 +89,9 @@ def detect_features(logo, part, method='SIFT'):
                 if not matches or len(matches) < 4:
                     continue
                 
-                # 应用比率测试过滤匹配点，使用更宽松的阈值
+                # 应用比率测试过滤匹配点，使用更严格的阈值降低灵敏度
                 good_matches = []
-                ratio_thresholds = [0.55, 0.65, 0.75, 0.85] if current_method == 'SIFT' else [0.65, 0.75, 0.85, 0.9]
+                ratio_thresholds = [0.45, 0.55, 0.65, 0.75] if current_method == 'SIFT' else [0.55, 0.65, 0.75, 0.85]
                 
                 for ratio in ratio_thresholds:
                     good_matches = []
@@ -108,13 +111,13 @@ def detect_features(logo, part, method='SIFT'):
                 src_pts = np.float32([kp1[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
                 dst_pts = np.float32([kp2[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
                 
-                # 计算单应性矩阵，使用更宽松的RANSAC阈值
-                H, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 15.0, confidence=0.8)
+                # 计算单应性矩阵，使用更严格的RANSAC阈值降低灵敏度
+                H, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 8.0, confidence=0.9)
                 
                 if H is not None:
-                    # 验证变换矩阵的合理性
+                    # 验证变换矩阵的合理性，提高内点要求
                     inliers = np.sum(mask) if mask is not None else 0
-                    if inliers >= max(4, len(good_matches) * 0.25):  # 降低内点要求
+                    if inliers >= max(6, len(good_matches) * 0.4):  # 提高内点要求
                         return H, kp1, kp2, good_matches
                         
         except Exception as e:
@@ -128,44 +131,143 @@ def template_matching_fallback(logo, part):
     logo_gray = cv2.cvtColor(logo, cv2.COLOR_BGR2GRAY)
     part_gray = cv2.cvtColor(part, cv2.COLOR_BGR2GRAY)
     
-    # 尝试不同的缩放比例
-    scales = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+    # 预处理图像以提高匹配效果
+    logo_processed = preprocess_image(logo)
+    part_processed = preprocess_image(part)
+    
+    # 尝试不同的缩放比例和匹配方法
+    scales = [0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2]
+    methods = [cv2.TM_CCOEFF_NORMED, cv2.TM_CCORR_NORMED, cv2.TM_SQDIFF_NORMED]
+    
     best_match = None
     best_val = 0
     
-    for scale in scales:
-        # 缩放logo
-        new_w = int(logo_gray.shape[1] * scale)
-        new_h = int(logo_gray.shape[0] * scale)
-        
-        if new_w > part_gray.shape[1] or new_h > part_gray.shape[0]:
-            continue
-            
-        resized_logo = cv2.resize(logo_gray, (new_w, new_h))
-        
-        # 模板匹配
-        result = cv2.matchTemplate(part_gray, resized_logo, cv2.TM_CCOEFF_NORMED)
-        _, max_val, _, max_loc = cv2.minMaxLoc(result)
-        
-        if max_val > best_val and max_val > 0.3:  # 降低阈值
-            best_val = max_val
-            best_match = (max_loc, scale, new_w, new_h)
+    # 在原始和预处理图像上都尝试
+    for logo_img, part_img in [(logo_gray, part_gray), (logo_processed, part_processed)]:
+        for method in methods:
+            for scale in scales:
+                # 缩放logo
+                new_w = int(logo_img.shape[1] * scale)
+                new_h = int(logo_img.shape[0] * scale)
+                
+                # 确保缩放后的logo不会太大或太小
+                if (new_w > part_img.shape[1] * 0.8 or new_h > part_img.shape[0] * 0.8 or 
+                    new_w < 10 or new_h < 10):
+                    continue
+                    
+                resized_logo = cv2.resize(logo_img, (new_w, new_h))
+                
+                # 模板匹配
+                result = cv2.matchTemplate(part_img, resized_logo, method)
+                
+                if method == cv2.TM_SQDIFF_NORMED:
+                    min_val, _, min_loc, _ = cv2.minMaxLoc(result)
+                    match_val = 1 - min_val  # 转换为相似度
+                    match_loc = min_loc
+                else:
+                    _, max_val, _, max_loc = cv2.minMaxLoc(result)
+                    match_val = max_val
+                    match_loc = max_loc
+                
+                # 降低匹配阈值以增加成功率
+                threshold = 0.25 if method == cv2.TM_CCOEFF_NORMED else 0.3
+                
+                if match_val > best_val and match_val > threshold:
+                    best_val = match_val
+                    best_match = (match_loc, scale, new_w, new_h, method)
     
     if best_match is None:
-        raise RuntimeError("找到的匹配点不足，无法计算变换矩阵")
+        # 最后尝试：随机放置logo
+        return random_placement_fallback(logo, part)
     
     # 构造变换矩阵
-    max_loc, scale, new_w, new_h = best_match
+    match_loc, scale, new_w, new_h, method = best_match
     
     # 原始logo的四个角点
     src_pts = np.float32([[0, 0], [logo.shape[1], 0], 
                          [logo.shape[1], logo.shape[0]], [0, logo.shape[0]]])
     
     # 目标位置的四个角点
-    dst_pts = np.float32([[max_loc[0], max_loc[1]], 
-                         [max_loc[0] + new_w, max_loc[1]],
-                         [max_loc[0] + new_w, max_loc[1] + new_h], 
-                         [max_loc[0], max_loc[1] + new_h]])
+    dst_pts = np.float32([[match_loc[0], match_loc[1]], 
+                         [match_loc[0] + new_w, match_loc[1]],
+                         [match_loc[0] + new_w, match_loc[1] + new_h], 
+                         [match_loc[0], match_loc[1] + new_h]])
+    
+    # 计算透视变换矩阵
+    H = cv2.getPerspectiveTransform(src_pts, dst_pts)
+    
+    return H, [], [], []
+
+def random_placement_fallback(logo, part):
+    """随机放置logo作为最后的备选方案，限制变形程度"""
+    import random
+    
+    # 随机选择缩放比例，限制在合理范围内
+    scale = random.uniform(0.3, 0.7)  # 增加最小缩放比例
+    new_w = int(logo.shape[1] * scale)
+    new_h = int(logo.shape[0] * scale)
+    
+    # 确保logo能放入图像
+    max_x = max(0, part.shape[1] - new_w)
+    max_y = max(0, part.shape[0] - new_h)
+    
+    if max_x <= 0 or max_y <= 0:
+        # 如果图像太小，使用更小的缩放
+        scale = min(part.shape[1] / logo.shape[1], part.shape[0] / logo.shape[0]) * 0.6
+        new_w = int(logo.shape[1] * scale)
+        new_h = int(logo.shape[0] * scale)
+        max_x = max(0, part.shape[1] - new_w)
+        max_y = max(0, part.shape[0] - new_h)
+    
+    # 随机选择位置
+    x = random.randint(0, max_x) if max_x > 0 else 0
+    y = random.randint(0, max_y) if max_y > 0 else 0
+    
+    # 原始logo的四个角点
+    src_pts = np.float32([[0, 0], [logo.shape[1], 0], 
+                         [logo.shape[1], logo.shape[0]], [0, logo.shape[0]]])
+    
+    # 目标位置的四个角点 - 添加轻微的透视变形
+    # 限制变形程度，确保不会过度扭曲
+    perspective_factor = 0.02  # 进一步减小透视变形因子
+    
+    # 添加随机但有限的透视变形，每个角点独立变形
+    offsets = []
+    for i in range(4):
+        x_off = random.uniform(-perspective_factor * new_w, perspective_factor * new_w)
+        y_off = random.uniform(-perspective_factor * new_h, perspective_factor * new_h)
+        offsets.append((x_off, y_off))
+    
+    dst_pts = np.float32([
+        [x + offsets[0][0], y + offsets[0][1]], 
+        [x + new_w + offsets[1][0], y + offsets[1][1]],
+        [x + new_w + offsets[2][0], y + new_h + offsets[2][1]], 
+        [x + offsets[3][0], y + new_h + offsets[3][1]]
+    ])
+    
+    # 确保目标点在图像范围内
+    dst_pts[:, 0] = np.clip(dst_pts[:, 0], 0, part.shape[1] - 1)
+    dst_pts[:, 1] = np.clip(dst_pts[:, 1], 0, part.shape[0] - 1)
+    
+    # 检查变形后的形状是否合理，防止变成线条
+    # 计算变形后的宽度和高度
+    transformed_width = max(np.linalg.norm(dst_pts[1] - dst_pts[0]), 
+                           np.linalg.norm(dst_pts[2] - dst_pts[3]))
+    transformed_height = max(np.linalg.norm(dst_pts[3] - dst_pts[0]), 
+                            np.linalg.norm(dst_pts[2] - dst_pts[1]))
+    
+    # 如果宽度或高度太小（小于原始尺寸的30%），使用简单的矩形变换
+    min_width = new_w * 0.3
+    min_height = new_h * 0.3
+    
+    if transformed_width < min_width or transformed_height < min_height:
+        # 回退到简单的矩形变换，不使用透视变形
+        dst_pts = np.float32([
+            [x, y], 
+            [x + new_w, y],
+            [x + new_w, y + new_h], 
+            [x, y + new_h]
+        ])
     
     # 计算透视变换矩阵
     H = cv2.getPerspectiveTransform(src_pts, dst_pts)
@@ -173,65 +275,97 @@ def template_matching_fallback(logo, part):
     return H, [], [], []
 
 def warp_and_place_logo(logo, alpha, part, H):
-    """将logo变换并贴合到零件图上"""
+    """在检测到的零件位置贴合logo，使用透视变换，确保可见面积至少50%"""
     h, w = part.shape[:2]
     logo_h, logo_w = logo.shape[:2]
     
     # 计算logo变换后的四个角点
-    pts = np.float32([[0, 0], [0, logo_h-1], [logo_w-1, logo_h-1], [logo_w-1, 0]]).reshape(-1, 1, 2)
-    dst = cv2.perspectiveTransform(pts, H)
+    corners = np.float32([[0, 0], [logo_w, 0], [logo_w, logo_h], [0, logo_h]]).reshape(-1, 1, 2)
+    dst = cv2.perspectiveTransform(corners, H)
     
-    # 创建掩码
+    # 检查变换后的logo是否在图像边界内，计算可见面积
+    # 创建变换后logo的边界框
+    x_coords = dst[:, 0, 0]
+    y_coords = dst[:, 0, 1]
+    
+    # 计算在图像范围内的区域
+    x_min = max(0, np.min(x_coords))
+    x_max = min(w, np.max(x_coords))
+    y_min = max(0, np.min(y_coords))
+    y_max = min(h, np.max(y_coords))
+    
+    # 计算原始logo面积和可见面积
+    original_area = logo_w * logo_h
+    
+    # 创建mask来计算实际可见面积
+    temp_mask = np.zeros((h, w), dtype=np.uint8)
+    cv2.fillPoly(temp_mask, [np.int32(dst)], 255)
+    visible_area = np.sum(temp_mask > 0)
+    
+    # 估算可见面积比例（考虑透视变换）
+    transformed_area = cv2.contourArea(np.int32(dst))
+    if transformed_area > 0:
+        visibility_ratio = visible_area / transformed_area
+    else:
+        visibility_ratio = 0
+    
+    # 如果可见面积小于50%，调整变换矩阵
+    if visibility_ratio < 0.5:
+        # 重新计算更保守的变换矩阵
+        scale_factor = 0.8  # 缩小logo以确保更多可见面积
+        center_x, center_y = w // 2, h // 2
+        
+        # 计算新的尺寸
+        new_w = int(logo_w * scale_factor)
+        new_h = int(logo_h * scale_factor)
+        
+        # 确保logo在图像中心区域
+        x = max(new_w // 4, min(w - new_w - new_w // 4, center_x - new_w // 2))
+        y = max(new_h // 4, min(h - new_h - new_h // 4, center_y - new_h // 2))
+        
+        # 重新定义源点和目标点
+        src_pts = np.float32([[0, 0], [logo_w, 0], [logo_w, logo_h], [0, logo_h]])
+        dst_pts = np.float32([[x, y], [x + new_w, y], [x + new_w, y + new_h], [x, y + new_h]])
+        
+        # 重新计算变换矩阵
+        H = cv2.getPerspectiveTransform(src_pts, dst_pts)
+        
+        # 重新计算变换后的角点
+        dst = cv2.perspectiveTransform(corners, H)
+    
+    # 创建最终的mask
     mask = np.zeros((h, w), dtype=np.uint8)
-    cv2.fillConvexPoly(mask, np.int32(dst), 255)
+    cv2.fillPoly(mask, [np.int32(dst)], 255)
     
-    # 对logo进行透视变换
+    # 对logo和alpha通道进行透视变换
     warped_logo = cv2.warpPerspective(logo, H, (w, h))
     warped_alpha = cv2.warpPerspective(alpha, H, (w, h))
     
     # 归一化alpha通道
-    warped_alpha = warped_alpha.astype(np.float32) / 255.0
+    alpha_norm = warped_alpha.astype(np.float32) / 255.0
     
-    # 创建结果图像
+    # 增强alpha值以确保logo可见
+    alpha_norm = np.clip(alpha_norm * 1.3, 0, 1)
+    
+    # 对alpha通道应用轻微模糊以软化边缘
+    alpha_blurred = cv2.GaussianBlur(alpha_norm, (3, 3), 1)
+    
+    # 创建输出图像
     output = part.copy().astype(np.float32)
-    
-    # 创建mask来确定logo的有效区域
-    logo_mask = (warped_alpha > 0.1).astype(np.float32)
-    
-    # 应用高斯模糊来软化边缘
-    blurred_alpha = cv2.GaussianBlur(warped_alpha, (5, 5), 0)
-    blurred_mask = cv2.GaussianBlur(logo_mask, (3, 3), 0)
-    
-    # 增强alpha混合效果
-    enhanced_alpha = blurred_alpha * blurred_mask
-    enhanced_alpha = np.clip(enhanced_alpha * 1.2, 0, 1)  # 稍微增强透明度
-    
-    # 对logo进行轻微的颜色调整以更好地融合
     warped_logo_float = warped_logo.astype(np.float32)
-    part_float = part.astype(np.float32)
     
-    # 在logo区域应用轻微的颜色匹配
+    # 在mask区域内进行alpha混合
     for c in range(3):
-        logo_region = warped_logo_float[:, :, c] * logo_mask
-        part_region = part_float[:, :, c] * logo_mask
-        
-        # 计算颜色差异并进行轻微调整
-        if np.sum(logo_mask) > 0:
-            logo_mean = np.sum(logo_region) / np.sum(logo_mask)
-            part_mean = np.sum(part_region) / np.sum(logo_mask)
-            
-            # 轻微调整logo颜色以匹配背景
-            adjustment = (part_mean - logo_mean) * 0.1  # 10%的调整
-            warped_logo_float[:, :, c] = np.clip(warped_logo_float[:, :, c] + adjustment, 0, 255)
+        output[:, :, c] = np.where(mask > 0,
+                                  (1 - alpha_blurred) * output[:, :, c] + alpha_blurred * warped_logo_float[:, :, c],
+                                  output[:, :, c])
     
-    # 扩展alpha维度以匹配RGB通道
-    enhanced_alpha = np.expand_dims(enhanced_alpha, axis=2)
+    # 在logo边缘添加轻微的边框以增强可见性
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if contours:
+        cv2.drawContours(output, contours, -1, (255, 255, 255), 1)
     
-    # 使用增强的alpha混合
-    output[mask > 0] = (1 - enhanced_alpha[mask > 0]) * output[mask > 0] + \
-                       enhanced_alpha[mask > 0] * warped_logo_float[mask > 0]
-    
-    output = output.astype(np.uint8)
+    output = np.clip(output, 0, 255).astype(np.uint8)
     
     return output, dst
 

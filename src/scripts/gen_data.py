@@ -32,6 +32,13 @@ def load_watermarks(logos_dir):
             if file.lower().endswith(('.png', '.jpg', '.jpeg')):
                 watermarks.append(os.path.join(independent_dir, file))
     
+      # 加载independent目录下的水印
+    independent_dir = os.path.join(logos_dir, 'car_logo')
+    if os.path.exists(independent_dir):
+        for file in os.listdir(independent_dir):
+            if file.lower().endswith(('.png', '.jpg', '.jpeg')):
+                watermarks.append(os.path.join(independent_dir, file))
+
     return watermarks
 
 def load_clean_images(clean_dir):
