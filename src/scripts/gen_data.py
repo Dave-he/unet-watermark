@@ -205,6 +205,7 @@ def main():
     parser.add_argument('--output_dir', default='data/train', help='输出目录')
     parser.add_argument('--target_count', type=int, default=10000, help='目标图片数量')
     parser.add_argument('--transparent_ratio', type=float, default=0.6, help='透明水印样本比例')
+    parser.add_argument('--generate_mask', action='store_true', help='是否生成mask图（默认不生成）')
     parser.add_argument('--seed', type=int, default=42, help='随机种子')
     
     args = parser.parse_args()
@@ -215,9 +216,11 @@ def main():
     
     # 创建输出目录
     watermarked_dir = os.path.join(args.output_dir, 'watermarked')
-    masks_dir = os.path.join(args.output_dir, 'masks')
     os.makedirs(watermarked_dir, exist_ok=True)
-    os.makedirs(masks_dir, exist_ok=True)
+    
+    if args.generate_mask:
+        masks_dir = os.path.join(args.output_dir, 'masks')
+        os.makedirs(masks_dir, exist_ok=True)
     
     # 加载图片路径
     clean_images = load_clean_images(args.clean_dir)
@@ -232,13 +235,20 @@ def main():
     
     # 计算需要生成的图片数量（减去已有的图片）
     existing_watermarked = len([f for f in os.listdir(watermarked_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))])
-    existing_masks = len([f for f in os.listdir(masks_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))])
     
-    remaining_count = args.target_count - min(existing_watermarked, existing_masks)
-    
-    if remaining_count <= 0:
-        print(f"已经有足够的图片（{min(existing_watermarked, existing_masks)}张），无需生成更多")
-        return
+    if args.generate_mask:
+        existing_masks = len([f for f in os.listdir(masks_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))])
+        remaining_count = args.target_count - min(existing_watermarked, existing_masks)
+        
+        if remaining_count <= 0:
+            print(f"已经有足够的图片（{min(existing_watermarked, existing_masks)}张），无需生成更多")
+            return
+    else:
+        remaining_count = args.target_count - existing_watermarked
+        
+        if remaining_count <= 0:
+            print(f"已经有足够的图片（{existing_watermarked}张），无需生成更多")
+            return
     
     print(f"需要生成 {remaining_count} 张新图片")
     
@@ -271,7 +281,10 @@ def main():
             
             # 保存图片
             watermarked_img.save(os.path.join(watermarked_dir, f"{filename}.jpg"), quality=95)
-            mask.save(os.path.join(masks_dir, f"{filename}.png"))
+            
+            # 只在需要时保存mask
+            if args.generate_mask:
+                mask.save(os.path.join(masks_dir, f"{filename}.png"))
             
             if should_generate_transparent:
                 transparent_count += 1
@@ -287,7 +300,11 @@ def main():
     print(f"\n成功生成 {generated_count} 张带水印图片")
     print(f"其中透明水印: {transparent_count} 张 ({transparent_count/generated_count*100:.1f}%)")
     print(f"带水印图片保存在: {watermarked_dir}")
-    print(f"Mask图片保存在: {masks_dir}")
+    
+    if args.generate_mask:
+        print(f"Mask图片保存在: {masks_dir}")
+    else:
+        print("未生成mask图片（使用 --generate_mask 参数启用）")
 
 if __name__ == '__main__':
     main()

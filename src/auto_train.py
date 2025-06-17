@@ -249,10 +249,13 @@ class AutoTrainingLoop:
         try:
             # 计算当前数据集大小
             watermarked_dir = os.path.join(self.train_data_dir, 'watermarked')
-            masks_dir = os.path.join(self.train_data_dir, 'masks')
-            
             os.makedirs(watermarked_dir, exist_ok=True)
-            os.makedirs(masks_dir, exist_ok=True)
+            
+            # 只在需要时创建masks目录
+            generate_mask = self.config.get('generate_mask', False)
+            if generate_mask:
+                masks_dir = os.path.join(self.train_data_dir, 'masks')
+                os.makedirs(masks_dir, exist_ok=True)
             
             current_count = len([f for f in os.listdir(watermarked_dir) 
                                if f.lower().endswith(('.png', '.jpg', '.jpeg'))])
@@ -264,7 +267,8 @@ class AutoTrainingLoop:
             augment_count = max(100, int(current_count * 0.2))
             target_count = current_count + augment_count
             
-            logger.info(f"当前数据集大小: {current_count}, 目标大小: {target_count}")
+            mask_info = "（生成mask）" if generate_mask else "（不生成mask）"
+            logger.info(f"当前数据集大小: {current_count}, 目标大小: {target_count} {mask_info}")
             
             # 加载干净图片和水印
             clean_dir = os.path.join(self.train_data_dir, 'clean')
@@ -304,7 +308,8 @@ class AutoTrainingLoop:
                 output_name = f"generated_{timestamp}_{generated_count:06d}.png"
                 
                 watermarked_path = os.path.join(watermarked_dir, output_name)
-                mask_path = os.path.join(masks_dir, output_name)
+                if generate_mask:
+                    mask_path = os.path.join(masks_dir, output_name)
                 
                 try:
                     # 生成带水印图片
@@ -315,7 +320,10 @@ class AutoTrainingLoop:
                     
                     # 保存图片
                     watermarked_img.save(watermarked_path, quality=95)
-                    mask.save(mask_path)
+                    
+                    # 只在需要时保存mask
+                    if generate_mask:
+                        mask.save(mask_path)
                     
                     generated_count += 1
                     pbar.update(1)
@@ -325,7 +333,10 @@ class AutoTrainingLoop:
                     continue
             
             pbar.close()
-            logger.info(f"数据扩充完成，生成了 {generated_count} 张新图片")
+            if generate_mask:
+                logger.info(f"数据扩充完成，生成了 {generated_count} 张新图片和对应的mask")
+            else:
+                logger.info(f"数据扩充完成，生成了 {generated_count} 张新图片（未生成mask）")
             return True
             
         except Exception as e:
@@ -440,6 +451,8 @@ def auto_main():
                        help='学习率')
     parser.add_argument('--output-dir', type=str, default='models/auto',
                        help='输出目录')
+    parser.add_argument('--generate-mask', action='store_true',
+                       help='是否在数据扩充时生成mask图（默认不生成）')
     
     args = parser.parse_args()
     
@@ -452,6 +465,7 @@ def auto_main():
         'batch_size': args.batch_size,
         'learning_rate': args.learning_rate,
         'output_base_dir': args.output_dir,
+        'generate_mask': getattr(args, 'generate_mask', False),
         'train_config': 'src/configs/unet_watermark.yaml',
         'model_selection_samples': 1000,
         'prediction_limit': 100,

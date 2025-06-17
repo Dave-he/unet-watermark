@@ -199,10 +199,44 @@ class WatermarkDataset(Dataset):
         # 二值化生成掩码
         _, mask = cv2.threshold(diff_gray, self.generate_mask_threshold, 255, cv2.THRESH_BINARY)
         
-        # 形态学操作去噪
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+        # 形态学操作去噪和扩大mask区域
+        # 使用更大的核进行开运算去噪
+        kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_small, iterations=1)
+        
+        # 使用更大的核进行闭运算连接断开的区域
+        kernel_medium = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_medium, iterations=2)
+        
+        # 膨胀操作扩大mask区域，确保覆盖完整的水印区域
+        kernel_large = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+        mask = cv2.dilate(mask, kernel_large, iterations=2)
+        
+        # 高斯模糊平滑边界
+        mask = cv2.GaussianBlur(mask, (5, 5), 1.0)
+        
+        # 重新二值化以获得清晰的边界
+        _, mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
+        
+        # 轮廓检测和多边形近似以获得平滑的多边形
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        if contours:
+            # 创建新的mask
+            smooth_mask = np.zeros_like(mask)
+            
+            for contour in contours:
+                # 计算轮廓面积，过滤小的噪声区域
+                area = cv2.contourArea(contour)
+                if area > 100:  # 最小面积阈值
+                    # 多边形近似，减少顶点数量以获得更平滑的形状
+                    epsilon = 0.02 * cv2.arcLength(contour, True)
+                    approx = cv2.approxPolyDP(contour, epsilon, True)
+                    
+                    # 填充平滑后的多边形
+                    cv2.fillPoly(smooth_mask, [approx], 255)
+            
+            mask = smooth_mask
         
         return mask
 
