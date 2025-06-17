@@ -187,7 +187,7 @@ class WatermarkDataset(Dataset):
         return np.zeros(watermarked_img.shape[:2], dtype=np.uint8)
     
     def _generate_mask(self, watermarked_img, clean_img):
-        """通过比较带水印图像和干净图像生成掩码"""
+        """通过比较带水印图像和干净图像生成掩码，确保生成完整连通域"""
         # 确保图像尺寸一致
         if watermarked_img.shape != clean_img.shape:
             clean_img = cv2.resize(clean_img, (watermarked_img.shape[1], watermarked_img.shape[0]))
@@ -199,44 +199,69 @@ class WatermarkDataset(Dataset):
         # 二值化生成掩码
         _, mask = cv2.threshold(diff_gray, self.generate_mask_threshold, 255, cv2.THRESH_BINARY)
         
-        # 形态学操作去噪和扩大mask区域
-        # 使用更大的核进行开运算去噪
+        # 形态学操作去噪和连接断开的区域
+        # 使用小核进行开运算去噪
         kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_small, iterations=1)
         
-        # 使用更大的核进行闭运算连接断开的区域
-        kernel_medium = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_medium, iterations=2)
+        # 使用中等核进行闭运算连接断开的区域
+        kernel_medium = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_medium, iterations=3)
         
-        # 膨胀操作扩大mask区域，确保覆盖完整的水印区域
-        kernel_large = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
-        mask = cv2.dilate(mask, kernel_large, iterations=2)
+        # 使用更大的核进行强闭运算，确保连通性
+        kernel_large = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_large, iterations=2)
         
-        # 高斯模糊平滑边界
-        mask = cv2.GaussianBlur(mask, (5, 5), 1.0)
+        # 膨胀操作扩大mask区域
+        kernel_dilate = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+        mask = cv2.dilate(mask, kernel_dilate, iterations=2)
         
-        # 重新二值化以获得清晰的边界
-        _, mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
+        # 连通组件分析，保留最大的连通域
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
         
-        # 轮廓检测和多边形近似以获得平滑的多边形
+        if num_labels > 1:  # 有连通组件（除了背景）
+            # 找到最大的连通组件（排除背景标签0）
+            largest_component_label = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+            
+            # 创建只包含最大连通组件的mask
+            mask = (labels == largest_component_label).astype(np.uint8) * 255
+            
+            # 如果最大连通组件太小，则保留所有较大的组件
+            max_area = stats[largest_component_label, cv2.CC_STAT_AREA]
+            if max_area < 500:  # 如果最大组件面积小于阈值
+                mask = np.zeros_like(labels, dtype=np.uint8)
+                for i in range(1, num_labels):
+                    if stats[i, cv2.CC_STAT_AREA] > 200:  # 保留面积大于200的组件
+                        mask[labels == i] = 255
+        
+        # 轮廓检测和凸包处理以获得更完整的连通域
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
         if contours:
             # 创建新的mask
-            smooth_mask = np.zeros_like(mask)
+            connected_mask = np.zeros_like(mask)
             
             for contour in contours:
-                # 计算轮廓面积，过滤小的噪声区域
                 area = cv2.contourArea(contour)
                 if area > 100:  # 最小面积阈值
-                    # 多边形近似，减少顶点数量以获得更平滑的形状
-                    epsilon = 0.02 * cv2.arcLength(contour, True)
-                    approx = cv2.approxPolyDP(contour, epsilon, True)
+                    # 计算凸包以获得更完整的连通域
+                    hull = cv2.convexHull(contour)
                     
-                    # 填充平滑后的多边形
-                    cv2.fillPoly(smooth_mask, [approx], 255)
+                    # 如果凸包面积与原轮廓面积比值合理，使用凸包
+                    hull_area = cv2.contourArea(hull)
+                    if hull_area > 0 and area / hull_area > 0.6:  # 凸性比例阈值
+                        cv2.fillPoly(connected_mask, [hull], 255)
+                    else:
+                        # 否则使用多边形近似
+                        epsilon = 0.015 * cv2.arcLength(contour, True)
+                        approx = cv2.approxPolyDP(contour, epsilon, True)
+                        cv2.fillPoly(connected_mask, [approx], 255)
             
-            mask = smooth_mask
+            mask = connected_mask
+        
+        # 最后的平滑处理
+        mask = cv2.GaussianBlur(mask, (3, 3), 0.5)
+        _, mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
         
         return mask
 
