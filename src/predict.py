@@ -332,7 +332,10 @@ class WatermarkPredictor:
         """文件夹迭代修复模式 - 核心功能"""
         # 创建输出目录和临时工作目录
         os.makedirs(output_folder, exist_ok=True)
-        temp_dir = tempfile.mkdtemp(prefix="watermark_removal_")
+        # 确保data/tmp目录存在
+        tmp_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "tmp")
+        os.makedirs(tmp_root, exist_ok=True)
+        temp_dir = tempfile.mkdtemp(prefix="watermark_removal_", dir=tmp_root)
         
         try:
             # 获取所有图片文件
@@ -585,7 +588,10 @@ class WatermarkPredictor:
                     current_output_dir = output_dir
                 else:
                     # 中间遍，输出到临时目录
-                    temp_dir = tempfile.mkdtemp(prefix=f'iopaint_iter{i+1}_')
+                    # 确保data/tmp目录存在
+                    tmp_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "tmp")
+                    os.makedirs(tmp_root, exist_ok=True)
+                    temp_dir = tempfile.mkdtemp(prefix=f'iopaint_iter{i+1}_', dir=tmp_root)
                     temp_dirs.append(temp_dir)
                     current_output_dir = temp_dir
                 
