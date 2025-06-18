@@ -28,6 +28,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 class WatermarkPredictor:
+    
     """水印预测器类 - 简化版，仅支持文件夹修复模式"""
     
     def __init__(self, model_path, config_path=None, config=None, device='cpu'):
@@ -78,7 +79,85 @@ class WatermarkPredictor:
         available_models.insert(0, current_model_path)
         
         return available_models
-    
+
+    def _optimize_mask(self, mask):
+        """优化预测的mask，使其稍微大一些，保证连通性，抑制噪声"""
+        if mask is None:
+            return mask
+            
+        # 确保mask是单通道的
+        if len(mask.shape) == 3:
+            mask = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+        
+        # 二值化确保mask只有0和255
+        _, mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
+        
+        # 形态学操作去噪和连接断开的区域
+        # 使用小核进行开运算去噪
+        kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_small, iterations=1)
+        
+        # 使用中等核进行闭运算连接断开的区域
+        kernel_medium = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_medium, iterations=3)
+        
+        # 使用更大的核进行强闭运算，确保连通性
+        kernel_large = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_large, iterations=2)
+        
+        # 膨胀操作扩大mask区域
+        kernel_dilate = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+        mask = cv2.dilate(mask, kernel_dilate, iterations=2)
+        
+        # 连通组件分析，保留最大的连通域
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
+        
+        if num_labels > 1:  # 有连通组件（除了背景）
+            # 找到最大的连通组件（排除背景标签0）
+            largest_component_label = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+            
+            # 创建只包含最大连通组件的mask
+            mask = (labels == largest_component_label).astype(np.uint8) * 255
+            
+            # 如果最大连通组件太小，则保留所有较大的组件
+            max_area = stats[largest_component_label, cv2.CC_STAT_AREA]
+            if max_area < 500:  # 如果最大组件面积小于阈值
+                mask = np.zeros_like(labels, dtype=np.uint8)
+                for i in range(1, num_labels):
+                    if stats[i, cv2.CC_STAT_AREA] > 200:  # 保留面积大于200的组件
+                        mask[labels == i] = 255
+        
+        # 轮廓检测和凸包处理以获得更完整的连通域
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        if contours:
+            # 创建新的mask
+            connected_mask = np.zeros_like(mask)
+            
+            for contour in contours:
+                area = cv2.contourArea(contour)
+                if area > 100:  # 最小面积阈值
+                    # 计算凸包以获得更完整的连通域
+                    hull = cv2.convexHull(contour)
+                    
+                    # 如果凸包面积与原轮廓面积比值合理，使用凸包
+                    hull_area = cv2.contourArea(hull)
+                    if hull_area > 0 and area / hull_area > 0.6:  # 凸性比例阈值
+                        cv2.fillPoly(connected_mask, [hull], 255)
+                    else:
+                        # 否则使用多边形近似
+                        epsilon = 0.015 * cv2.arcLength(contour, True)
+                        approx = cv2.approxPolyDP(contour, epsilon, True)
+                        cv2.fillPoly(connected_mask, [approx], 255)
+            
+            mask = connected_mask
+        
+        # 最后的平滑处理
+        mask = cv2.GaussianBlur(mask, (3, 3), 0.5)
+        _, mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
+        
+        return mask
+
     def select_model_for_iteration(self, iteration):
         """为当前迭代选择最优模型"""
         if iteration == 1 or not self.last_iteration_detected:
@@ -362,6 +441,9 @@ class WatermarkPredictor:
                     info['current_path']
                 )
                 
+                # 优化预测的mask
+                mask = self._optimize_mask(mask)
+                
                 info['final_watermark_ratio'] = watermark_ratio
                 info['detection_model'] = model_used
                 
@@ -490,37 +572,79 @@ class WatermarkPredictor:
                     del info['mask_path']
     
     def batch_remove_watermark_with_iopaint(self, input_dir, mask_dir, output_dir, model_name='lama', timeout=600, repeat_time=3):
-        """使用iopaint批量去除水印"""
+        """使用iopaint批量去除水印，支持连续处理多遍"""
         try:
-            # 准备iopaint批量命令
-            cmd = [
-                'iopaint', 'run',
-                '--model', model_name,
-                '--device', self.device.type,
-                '--image', input_dir,
-                '--mask', mask_dir,
-                '--output', output_dir
-            ]
+            # 创建临时目录用于中间结果
+            temp_dirs = []
+            current_input_dir = input_dir
             
-            # 运行iopaint批量处理
-            logger.info(f"执行IOPaint批量命令: {' '.join(cmd)}")
-            for i in range(repeat_time) :
+            for i in range(repeat_time):
+                # 确定当前遍的输出目录
+                if i == repeat_time - 1:
+                    # 最后一遍，输出到目标目录
+                    current_output_dir = output_dir
+                else:
+                    # 中间遍，输出到临时目录
+                    temp_dir = tempfile.mkdtemp(prefix=f'iopaint_iter{i+1}_')
+                    temp_dirs.append(temp_dir)
+                    current_output_dir = temp_dir
+                
+                # 准备当前遍的iopaint命令
+                cmd = [
+                    'iopaint', 'run',
+                    '--model', model_name,
+                    '--device', self.device.type,
+                    '--image', current_input_dir,
+                    '--mask', mask_dir,
+                    '--output', current_output_dir
+                ]
+                
+                # 运行当前遍的iopaint处理
+                logger.info(f"执行第{i+1}遍IOPaint处理: {' '.join(cmd)}")
                 result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=timeout)
+                
+                # 检查当前遍是否生成了文件
+                output_files = [f for f in os.listdir(current_output_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+                if not output_files:
+                    # 清理临时目录
+                    for temp_dir in temp_dirs:
+                        if os.path.exists(temp_dir):
+                            shutil.rmtree(temp_dir)
+                    return False, f"第{i+1}遍IOPaint处理未生成任何输出文件"
+                
+                logger.info(f"第{i+1}遍IOPaint处理完成，生成 {len(output_files)} 个文件")
+                
+                # 下一遍的输入目录是当前遍的输出目录
+                current_input_dir = current_output_dir
             
-            # 检查输出目录是否有文件生成
-            output_files = [f for f in os.listdir(output_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
-            if not output_files:
-                return False, "IOPaint批量处理未生成任何输出文件"
+            # 清理临时目录
+            for temp_dir in temp_dirs:
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
             
-            logger.info(f"IOPaint批量处理成功，生成 {len(output_files)} 个文件")
-            return True, "批量处理成功"
+            # 检查最终输出目录
+            final_output_files = [f for f in os.listdir(output_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+            logger.info(f"IOPaint连续{repeat_time}遍处理成功，最终生成 {len(final_output_files)} 个文件")
+            return True, f"连续{repeat_time}遍处理成功"
             
         except subprocess.TimeoutExpired:
-            return False, f"IOPaint批量处理超时（{timeout}秒）"
+            # 清理临时目录
+            for temp_dir in temp_dirs:
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
+            return False, f"IOPaint处理超时（{timeout}秒）"
         except subprocess.CalledProcessError as e:
+            # 清理临时目录
+            for temp_dir in temp_dirs:
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
             error_msg = e.stderr if e.stderr else e.stdout if e.stdout else "未知错误"
-            return False, f"IOPaint批量处理错误: {error_msg}"
+            return False, f"IOPaint处理错误: {error_msg}"
         except Exception as e:
+            # 清理临时目录
+            for temp_dir in temp_dirs:
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
             return False, f"批量处理错误: {str(e)}"
     
     def _copy_final_results(self, image_status, output_folder):
