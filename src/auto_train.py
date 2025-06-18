@@ -139,7 +139,7 @@ class AutoTrainingLoop:
             logger.error(f"模型选择失败: {e}")
             return self._find_latest_checkpoint()
     
-    def step2_training(self, cycle_output_dir, resume_model=None):
+    def step2_training(self, cycle_output_dir, resume_model=None, use_blurred_mask=False):
         """步骤2: 从检查点继续训练指定轮数"""
         logger.info(f"=== 第{self.current_cycle}轮 - 步骤2: 模型训练 ===")
         
@@ -187,7 +187,7 @@ class AutoTrainingLoop:
             cfg.freeze()
             
             # 直接调用训练函数
-            train(cfg, resume_from=resume_model)
+            train(cfg, resume_from=resume_model, use_blurred_mask=use_blurred_mask)
             
             # 查找训练产生的最新模型
             latest_model = self._find_latest_checkpoint()
@@ -359,7 +359,8 @@ class AutoTrainingLoop:
             best_model = self.step1_model_selection(cycle_output_dir)
             
             # 步骤2: 模型训练
-            trained_model = self.step2_training(cycle_output_dir, best_model)
+            use_blurred_mask = self.config.get('use_blurred_mask', False)
+            trained_model = self.step2_training(cycle_output_dir, best_model, use_blurred_mask)
             
             # 步骤3: 模型预测
             if trained_model:

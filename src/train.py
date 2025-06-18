@@ -196,12 +196,13 @@ def save_training_plots(train_losses, val_losses, train_metrics, val_metrics, ou
     plt.savefig(os.path.join(output_dir, 'training_curves.png'), dpi=300, bbox_inches='tight')
     plt.close()
 
-def train(cfg, resume_from=None):
+def train(cfg, resume_from=None, use_blurred_mask=False):
     """训练函数
     
     Args:
         cfg: 配置对象
         resume_from: 要恢复的checkpoint路径，如果为None则从头开始训练
+        use_blurred_mask: 是否使用模糊的mask进行训练，默认False生成精确mask
     """
     # 创建输出目录
     os.makedirs(os.path.dirname(cfg.TRAIN.MODEL_SAVE_PATH), exist_ok=True)
@@ -221,7 +222,11 @@ def train(cfg, resume_from=None):
     logger.info(f"创建模型: {cfg.MODEL.NAME} with {cfg.MODEL.ENCODER_NAME} encoder")
     
     # 创建数据集和数据加载器
-    train_dataset, val_dataset = create_datasets(cfg)
+    train_dataset, val_dataset = create_datasets(cfg, use_blurred_mask=use_blurred_mask)
+    
+    # 记录mask类型
+    mask_type = "模糊mask" if use_blurred_mask else "精确mask"
+    logger.info(f"使用{mask_type}进行训练")
     
     # 优化数据加载器配置
     num_workers = min(cfg.DATA.NUM_WORKERS, os.cpu_count())
@@ -535,6 +540,11 @@ def main():
         default=None,
         help='从指定的checkpoint文件恢复训练'
     )
+    parser.add_argument(
+        '--use-blurred-mask', 
+        action='store_true',
+        help='使用模糊的mask进行训练，默认生成精确的mask'
+    )
     
     args = parser.parse_args()
     
@@ -560,7 +570,7 @@ def main():
         cfg.TRAIN.EARLY_STOPPING_PATIENCE = args.early_stopping_patience
     
     # 开始训练
-    train(cfg, resume_from=args.resume)
+    train(cfg, resume_from=args.resume, use_blurred_mask=getattr(args, 'use_blurred_mask', False))
 
 if __name__ == "__main__":
     main()

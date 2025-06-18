@@ -113,8 +113,9 @@ def train_command(args):
         model = WatermarkSegmentationModel(cfg)
         print(f"模型信息: {model.get_model_info()}")
         
-        # 开始训练 - 传递cfg和resume参数
-        train(cfg, resume_from=getattr(args, 'resume', None))
+        # 开始训练 - 传递cfg、resume和use_blurred_mask参数
+        train(cfg, resume_from=getattr(args, 'resume', None), 
+              use_blurred_mask=getattr(args, 'use_blurred_mask', False))
         
         print("\n训练完成！")
         print(f"最佳模型已保存到: {cfg.TRAIN.MODEL_SAVE_PATH}")
@@ -356,7 +357,8 @@ def auto_train_command(args):
         'model_selection_samples': args.samples,
         'prediction_limit': args.prediction_limit,
         'transparent_ratio': args.transparent_ratio,
-        'logos_dir': args.logos_dir
+        'logos_dir': args.logos_dir,
+        'use_blurred_mask': getattr(args, 'use_blurred_mask', False)
     }
     
     # 如果提供了配置文件，加载配置
@@ -441,6 +443,10 @@ def main():
     train_parser.add_argument('--resume', type=str,
                              help='从指定的checkpoint文件恢复训练')
     
+    # 添加模糊mask参数
+    train_parser.add_argument('--use-blurred-mask', action='store_true',
+                             help='使用模糊的mask进行训练，默认生成精确的mask')
+    
     # 循环修复命令
     repair_parser = subparsers.add_parser('repair', help='循环检测和修复水印')
     
@@ -507,6 +513,8 @@ def main():
                                   help='透明水印比例 (默认: 0.6)')
     auto_train_parser.add_argument('--logos-dir', type=str, default='data/WatermarkDataset/logos',
                                   help='水印图片目录 (默认: data/WatermarkDataset/logos)')
+    auto_train_parser.add_argument('--use-blurred-mask', action='store_true',
+                                  help='使用模糊的mask进行训练，默认生成精确的mask')
     
     # 解析参数
     args = parser.parse_args()

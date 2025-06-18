@@ -21,7 +21,7 @@ class WatermarkDataset(Dataset):
     
     def __init__(self, watermarked_dirs, clean_dirs=None, mask_dirs=None,
                  transform=None, mode='train', generate_mask_threshold=30, 
-                 cache_images=True, prefetch_factor=2):
+                 cache_images=True, prefetch_factor=2, use_blurred_mask=False):
         """
         初始化数据集
         
@@ -34,6 +34,7 @@ class WatermarkDataset(Dataset):
             generate_mask_threshold (int): 生成掩码的阈值
             cache_images (bool): 是否缓存图像
             prefetch_factor (int): 预取因子
+            use_blurred_mask (bool): 是否使用模糊的mask进行训练，默认False生成精确mask
         """
         self.watermarked_dirs = watermarked_dirs if isinstance(watermarked_dirs, list) else [watermarked_dirs]
         self.clean_dirs = clean_dirs if isinstance(clean_dirs, list) else [clean_dirs] if clean_dirs else []
@@ -43,6 +44,7 @@ class WatermarkDataset(Dataset):
         self.generate_mask_threshold = generate_mask_threshold
         self.cache_images = cache_images
         self.prefetch_factor = prefetch_factor
+        self.use_blurred_mask = use_blurred_mask
         self.image_cache = {} if cache_images else None
         
         # 初始化图像文件列表
@@ -193,7 +195,7 @@ class WatermarkDataset(Dataset):
         return np.zeros(watermarked_img.shape[:2], dtype=np.uint8)
     
     def _generate_mask(self, watermarked_img, clean_img):
-        """通过比较带水印图像和干净图像生成掩码，确保生成完整连通域"""
+        """通过比较带水印图像和干净图像生成掩码"""
         # 确保图像尺寸一致
         if watermarked_img.shape != clean_img.shape:
             clean_img = cv2.resize(clean_img, (watermarked_img.shape[1], watermarked_img.shape[0]))
@@ -204,72 +206,94 @@ class WatermarkDataset(Dataset):
         
         # 二值化生成掩码
         _, mask = cv2.threshold(diff_gray, self.generate_mask_threshold, 255, cv2.THRESH_BINARY)
-        
-        # 形态学操作去噪和连接断开的区域
         # 使用小核进行开运算去噪
         kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_small, iterations=1)
-        
-        # 使用中等核进行闭运算连接断开的区域
-        kernel_medium = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_medium, iterations=3)
-        
-        # 使用更大的核进行强闭运算，确保连通性
-        kernel_large = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_large, iterations=2)
-        
-        # 膨胀操作扩大mask区域
-        kernel_dilate = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
-        mask = cv2.dilate(mask, kernel_dilate, iterations=2)
-        
-        # 连通组件分析，保留最大的连通域
-        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
-        
-        if num_labels > 1:  # 有连通组件（除了背景）
-            # 找到最大的连通组件（排除背景标签0）
-            largest_component_label = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+
+      
+        # 根据use_blurred_mask参数决定处理方式
+        if self.use_blurred_mask:
+            # 模糊mask：包含形态学操作去噪和连接断开的区域
             
-            # 创建只包含最大连通组件的mask
-            mask = (labels == largest_component_label).astype(np.uint8) * 255
+            # 使用中等核进行闭运算连接断开的区域
+            kernel_medium = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_medium, iterations=3)
             
-            # 如果最大连通组件太小，则保留所有较大的组件
-            max_area = stats[largest_component_label, cv2.CC_STAT_AREA]
-            if max_area < 500:  # 如果最大组件面积小于阈值
-                mask = np.zeros_like(labels, dtype=np.uint8)
-                for i in range(1, num_labels):
-                    if stats[i, cv2.CC_STAT_AREA] > 200:  # 保留面积大于200的组件
-                        mask[labels == i] = 255
-        
-        # 轮廓检测和凸包处理以获得更完整的连通域
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        if contours:
-            # 创建新的mask
-            connected_mask = np.zeros_like(mask)
+            # 使用更大的核进行强闭运算，确保连通性
+            kernel_large = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_large, iterations=2)
             
-            for contour in contours:
-                area = cv2.contourArea(contour)
-                if area > 100:  # 最小面积阈值
-                    # 计算凸包以获得更完整的连通域
-                    hull = cv2.convexHull(contour)
-                    
-                    # 如果凸包面积与原轮廓面积比值合理，使用凸包
-                    hull_area = cv2.contourArea(hull)
-                    if hull_area > 0 and area / hull_area > 0.6:  # 凸性比例阈值
-                        cv2.fillPoly(connected_mask, [hull], 255)
-                    else:
-                        # 否则使用多边形近似
-                        epsilon = 0.015 * cv2.arcLength(contour, True)
-                        approx = cv2.approxPolyDP(contour, epsilon, True)
-                        cv2.fillPoly(connected_mask, [approx], 255)
+            # 膨胀操作扩大mask区域
+            kernel_dilate = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+            mask = cv2.dilate(mask, kernel_dilate, iterations=2)
             
-            mask = connected_mask
-        
-        # 最后的平滑处理
-        mask = cv2.GaussianBlur(mask, (3, 3), 0.5)
-        _, mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
+            # 连通组件分析，保留最大的连通域
+            num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
+            
+            if num_labels > 1:  # 有连通组件（除了背景）
+                # 找到最大的连通组件（排除背景标签0）
+                largest_component_label = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+                
+                # 创建只包含最大连通组件的mask
+                mask = (labels == largest_component_label).astype(np.uint8) * 255
+                
+                # 如果最大连通组件太小，则保留所有较大的组件
+                max_area = stats[largest_component_label, cv2.CC_STAT_AREA]
+                if max_area < 500:  # 如果最大组件面积小于阈值
+                    mask = np.zeros_like(labels, dtype=np.uint8)
+                    for i in range(1, num_labels):
+                        if stats[i, cv2.CC_STAT_AREA] > 200:  # 保留面积大于200的组件
+                            mask[labels == i] = 255
+            
+            # 轮廓检测和凸包处理以获得更完整的连通域
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            if contours:
+                # 创建新的mask
+                connected_mask = np.zeros_like(mask)
+                
+                for contour in contours:
+                    area = cv2.contourArea(contour)
+                    if area > 100:  # 最小面积阈值
+                        # 计算凸包以获得更完整的连通域
+                        hull = cv2.convexHull(contour)
+                        
+                        # 如果凸包面积与原轮廓面积比值合理，使用凸包
+                        hull_area = cv2.contourArea(hull)
+                        if hull_area > 0 and area / hull_area > 0.6:  # 凸性比例阈值
+                            cv2.fillPoly(connected_mask, [hull], 255)
+                        else:
+                            # 否则使用多边形近似
+                            epsilon = 0.015 * cv2.arcLength(contour, True)
+                            approx = cv2.approxPolyDP(contour, epsilon, True)
+                            cv2.fillPoly(connected_mask, [approx], 255)
+                
+                mask = connected_mask
+            
+            # 生成模糊的mask
+            mask = self._apply_blur_to_mask(mask)
+        else:
+            # 精确mask：只进行简单的平滑处理，不包含形态学操作
+            mask = cv2.GaussianBlur(mask, (3, 3), 0.5)
+            _, mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
         
         return mask
+    
+    def _apply_blur_to_mask(self, mask):
+        """对mask应用模糊处理，生成软边缘的模糊mask"""
+        # 首先进行轻微的高斯模糊
+        blurred_mask = cv2.GaussianBlur(mask, (15, 15), 5.0)
+        
+        # 应用更强的模糊以创建渐变边缘
+        blurred_mask = cv2.GaussianBlur(blurred_mask, (31, 31), 10.0)
+        
+        # 可选：添加一些随机噪声来增加训练的鲁棒性
+        if self.mode == 'train':
+            noise = np.random.normal(0, 5, blurred_mask.shape).astype(np.float32)
+            blurred_mask = blurred_mask.astype(np.float32) + noise
+            blurred_mask = np.clip(blurred_mask, 0, 255).astype(np.uint8)
+        
+        return blurred_mask
 
 def get_transparent_watermark_transform(img_size=512):
     """专门针对透明水印的数据增强变换"""
@@ -370,8 +394,13 @@ def get_val_transform(img_size=512):
         ToTensorV2(),
     ])
 
-def create_datasets(cfg):
-    """创建训练集和验证集"""
+def create_datasets(cfg, use_blurred_mask=False):
+    """创建训练集和验证集
+    
+    Args:
+        cfg: 配置对象
+        use_blurred_mask (bool): 是否使用模糊的mask进行训练，默认False生成精确mask
+    """
     # 创建完整数据集
     # 准备多个数据目录
     watermarked_dirs = [os.path.join(cfg.DATA.ROOT_DIR, "watermarked")]
@@ -403,7 +432,8 @@ def create_datasets(cfg):
         mask_dirs=mask_dirs,
         transform=train_transform,
         mode='train',
-        generate_mask_threshold=cfg.DATA.GENERATE_MASK_THRESHOLD
+        generate_mask_threshold=cfg.DATA.GENERATE_MASK_THRESHOLD,
+        use_blurred_mask=use_blurred_mask
     )
     
     # 设置随机种子确保可复现
@@ -430,7 +460,8 @@ def create_datasets(cfg):
         mask_dirs=mask_dirs,
         transform=train_transform,
         mode='train',
-        generate_mask_threshold=cfg.DATA.GENERATE_MASK_THRESHOLD
+        generate_mask_threshold=cfg.DATA.GENERATE_MASK_THRESHOLD,
+        use_blurred_mask=use_blurred_mask
     )
     
     # 验证集使用标准验证变换
@@ -440,15 +471,19 @@ def create_datasets(cfg):
         mask_dirs=mask_dirs,
         transform=get_val_transform(cfg.DATA.IMG_SIZE),
         mode='val',
-        generate_mask_threshold=cfg.DATA.GENERATE_MASK_THRESHOLD
+        generate_mask_threshold=cfg.DATA.GENERATE_MASK_THRESHOLD,
+        use_blurred_mask=use_blurred_mask
     )
     
     # 创建子集
     train_dataset = Subset(train_dataset_full, train_indices)
     val_dataset = Subset(val_dataset_full, val_indices)
     
+    # 输出mask类型信息
+    mask_type = "模糊mask" if use_blurred_mask else "精确mask"
     print(f"数据集划分完成:")
     print(f"训练集: {len(train_dataset)} 张图像")
     print(f"验证集: {len(val_dataset)} 张图像")
+    print(f"Mask类型: {mask_type}")
     
     return train_dataset, val_dataset
