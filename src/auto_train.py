@@ -26,6 +26,7 @@ from scripts.model_selector import ModelSelector
 from train import train, get_cfg_defaults, update_config
 from predict import WatermarkPredictor
 from scripts.gen_data import load_clean_images, load_watermarks, generate_watermarked_image
+from scripts.video_generator import VideoGenerator
 from tqdm import tqdm
 
 # 设置日志
@@ -203,7 +204,7 @@ class AutoTrainingLoop:
         
         if not model_path or not os.path.exists(model_path):
             logger.error("模型文件不存在，跳过预测步骤")
-            return False
+            return False, None
         
         prediction_dir = os.path.join(cycle_output_dir, 'prediction')
         os.makedirs(prediction_dir, exist_ok=True)
@@ -236,15 +237,63 @@ class AutoTrainingLoop:
             )
             
             logger.info(f"预测完成，处理了 {len(test_images)} 张图片")
-            return True
+            return True, prediction_dir
             
         except Exception as e:
             logger.error(f"预测失败: {e}")
+            return False, None
+    
+    def step4_video_generation(self, cycle_output_dir, prediction_dir):
+        """步骤4: 生成对比视频"""
+        logger.info(f"=== 第{self.current_cycle}轮 - 步骤4: 生成对比视频 ===")
+        
+        if not prediction_dir or not os.path.exists(prediction_dir):
+            logger.error("预测结果目录不存在，跳过视频生成步骤")
+            return False
+        
+        # 检查是否启用视频生成
+        if not self.config.get('generate_video', True):
+            logger.info("视频生成功能已禁用，跳过此步骤")
+            return True
+        
+        video_output_dir = os.path.join(cycle_output_dir, 'videos')
+        os.makedirs(video_output_dir, exist_ok=True)
+        
+        try:
+            # 创建视频生成器实例
+            video_generator = VideoGenerator(
+                input_dir=self.test_data_dir,
+                repair_dir=prediction_dir,
+                output_dir=video_output_dir,
+                width=self.config.get('video_width', 1920),
+                height=self.config.get('video_height', 1080),
+                duration_per_image=self.config.get('video_duration_per_image', 2.0),
+                fps=self.config.get('video_fps', 30)
+            )
+            
+            # 生成对比视频
+            video_mode = self.config.get('video_mode', 'sidebyside')  # 默认使用并排对比
+            
+            if video_mode == 'sidebyside':
+                video_path = video_generator.create_side_by_side_video()
+                logger.info(f"并排对比视频生成完成: {video_path}")
+            elif video_mode == 'comparison':
+                video_path = video_generator.create_comparison_video()
+                logger.info(f"切换对比视频生成完成: {video_path}")
+            else:
+                logger.warning(f"未知的视频模式: {video_mode}，使用默认的并排对比模式")
+                video_path = video_generator.create_side_by_side_video()
+                logger.info(f"并排对比视频生成完成: {video_path}")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"视频生成失败: {e}")
             return False
     
-    def step4_data_augmentation(self, cycle_output_dir):
-        """步骤4: 数据扩充"""
-        logger.info(f"=== 第{self.current_cycle}轮 - 步骤4: 数据扩充 ===")
+    def step5_data_augmentation(self, cycle_output_dir):
+        """步骤5: 数据扩充"""
+        logger.info(f"=== 第{self.current_cycle}轮 - 步骤5: 数据扩充 ===")
         
         try:
             # 计算当前数据集大小
@@ -363,12 +412,18 @@ class AutoTrainingLoop:
             trained_model = self.step2_training(cycle_output_dir, best_model, use_blurred_mask)
             
             # 步骤3: 模型预测
+            prediction_success = False
+            prediction_dir = None
             if trained_model:
-                self.step3_prediction(cycle_output_dir, trained_model)
+                prediction_success, prediction_dir = self.step3_prediction(cycle_output_dir, trained_model)
             
-            # 步骤4: 数据扩充（除了最后一轮）
+            # 步骤4: 生成对比视频
+            if prediction_success and prediction_dir:
+                self.step4_video_generation(cycle_output_dir, prediction_dir)
+            
+            # 步骤5: 数据扩充（除了最后一轮）
             if cycle_num < self.max_cycles:
-                self.step4_data_augmentation(cycle_output_dir)
+                self.step5_data_augmentation(cycle_output_dir)
             
             # 保存循环信息
             cycle_info = {
@@ -454,6 +509,18 @@ def auto_main():
                        help='输出目录')
     parser.add_argument('--generate-mask', action='store_true',
                        help='是否在数据扩充时生成mask图（默认不生成）')
+    parser.add_argument('--generate-video', action='store_true', default=True,
+                       help='是否在预测后生成对比视频（默认生成）')
+    parser.add_argument('--video-mode', type=str, default='sidebyside', choices=['sidebyside', 'comparison'],
+                       help='视频生成模式：sidebyside（并排对比）或comparison（切换对比）')
+    parser.add_argument('--video-width', type=int, default=1280,
+                       help='视频宽度')
+    parser.add_argument('--video-height', type=int, default=720,
+                       help='视频高度')
+    parser.add_argument('--video-fps', type=int, default=30,
+                       help='视频帧率')
+    parser.add_argument('--video-duration', type=float, default=2.0,
+                       help='每张图片在视频中的展示时长（秒）')
     
     args = parser.parse_args()
     
@@ -467,6 +534,12 @@ def auto_main():
         'learning_rate': args.learning_rate,
         'output_base_dir': args.output_dir,
         'generate_mask': getattr(args, 'generate_mask', False),
+        'generate_video': getattr(args, 'generate_video', True),
+        'video_mode': getattr(args, 'video_mode', 'sidebyside'),
+        'video_width': getattr(args, 'video_width', 1280),
+        'video_height': getattr(args, 'video_height', 720),
+        'video_fps': getattr(args, 'video_fps', 30),
+        'video_duration_per_image': getattr(args, 'video_duration', 2.0),
         'train_config': 'src/configs/unet_watermark.yaml',
         'model_selection_samples': 1000,
         'prediction_limit': 100,

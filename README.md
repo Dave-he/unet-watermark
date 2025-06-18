@@ -165,6 +165,10 @@ python src/scripts/video_generator.py -i data/original -r data/repaired -o video
 huggingface-cli upload heyongxian/watermark_images ./data --repo-type=dataset
 
 
+huggingface-cli upload heyongxian/watermark_stable_diffusion . --repo-type=dataset
+
+modelscope upload  heyongxian/watermark-unet-a100 models/checkpoints --token be07c2b9-5f5d-46fc-ac11-3cebb8e99a87
+
 ```
 7z a -t7z -mx9 -mmt=8 -v900m data.7z ./data
 
