@@ -617,7 +617,7 @@ def main():
     )
     
     # 必需参数
-    parser.add_argument('--input', '-i', type=str, default='/Users/hyx/Pictures/image',
+    parser.add_argument('--input', '-i', type=str, default='data/test',
                        help='原图目录路径')
     parser.add_argument('--repair', '-r', type=str, default='data/result',
                        help='修复图目录路径')

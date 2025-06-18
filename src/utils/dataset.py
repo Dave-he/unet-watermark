@@ -82,22 +82,21 @@ class WatermarkDataset(Dataset):
                 logger.warning(f"预加载失败: {image_path}, {e}")
     
     def __getitem__(self, idx):
-        # 使用缓存的图像
+        watermarked_path = self.image_files[idx]
+        image_name = os.path.basename(watermarked_path)
+        
+        # 使用缓存的图像或读取新图像
         if self.image_cache and idx in self.image_cache:
             watermarked_img = self.image_cache[idx]
-            image_name = os.path.basename(self.image_files[idx])
         else:
-            watermarked_path = self.image_files[idx]
-            image_name = os.path.basename(watermarked_path)
-        
-        # 读取带水印图像 - 添加错误处理
-        watermarked_img = self._safe_imread(watermarked_path)
-        if watermarked_img is None:
-            # 如果图片损坏，尝试使用下一张图片
-            logger.warning(f"跳过损坏的图片: {watermarked_path}")
-            return self.__getitem__((idx + 1) % len(self.image_files))
-        
-        watermarked_img = cv2.cvtColor(watermarked_img, cv2.COLOR_BGR2RGB)
+            # 读取带水印图像 - 添加错误处理
+            watermarked_img = self._safe_imread(watermarked_path)
+            if watermarked_img is None:
+                # 如果图片损坏，尝试使用下一张图片
+                logger.warning(f"跳过损坏的图片: {watermarked_path}")
+                return self.__getitem__((idx + 1) % len(self.image_files))
+            
+            watermarked_img = cv2.cvtColor(watermarked_img, cv2.COLOR_BGR2RGB)
         
         # 获取或生成掩码
         mask = self._get_or_generate_mask(image_name, watermarked_img)
@@ -178,8 +177,15 @@ class WatermarkDataset(Dataset):
                     # 保存生成的掩码到第一个mask_dir
                     if self.mask_dirs:
                         mask_name = os.path.splitext(image_name)[0] + '.png'
-                        mask_path = os.path.join(self.mask_dirs[0], mask_name)
-                        cv2.imwrite(mask_path, mask)
+                        mask_dir = self.mask_dirs[0]
+                        # 确保mask目录存在
+                        os.makedirs(mask_dir, exist_ok=True)
+                        mask_path = os.path.join(mask_dir, mask_name)
+                        try:
+                            cv2.imwrite(mask_path, mask)
+                            logger.info(f"生成并保存mask: {mask_path}")
+                        except Exception as e:
+                            logger.warning(f"保存mask失败: {mask_path}, 错误: {str(e)}")
                     
                     return mask
         

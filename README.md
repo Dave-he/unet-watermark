@@ -125,7 +125,7 @@ python main.py repair --input data/train/watermarked --output data/result \
   --limit 100 --generate-video
 
 
-python main.py repair --input /Users/hyx/Pictures/image --output data/result \
+python main.py repair --input data/test --output data/result \
   --model models/unet_watermark.pth \
   --iopaint-model lama \
   --limit 100 --generate-video
@@ -137,7 +137,7 @@ python src/scripts/model_selector.py --input data/train/watermarked --model mode
 
 
 python src/scripts/model_selector.py \
-    --input /Users/hyx/Pictures/image2 \
+    --input data/test \
     --model models \
     --output data/model_evaluation \
     --num-samples 10 \

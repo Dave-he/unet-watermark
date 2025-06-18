@@ -444,7 +444,7 @@ def main():
     # 循环修复命令
     repair_parser = subparsers.add_parser('repair', help='循环检测和修复水印')
     
-    repair_parser.add_argument('--input', type=str, default='/Users/hyx/Pictures/image',
+    repair_parser.add_argument('--input', type=str, default='data/test',
                               help='输入图像路径或目录')
     repair_parser.add_argument('--output', type=str, default='data/result',
                               help='输出目录')
