@@ -353,7 +353,7 @@ def auto_train_command(args):
         'learning_rate': args.learning_rate,
         'output_base_dir': args.output_dir,
         'train_config': args.config or 'src/configs/unet_watermark.yaml',
-        'model_selection_samples': args.model_selection_samples,
+        'model_selection_samples': args.samples,
         'prediction_limit': args.prediction_limit,
         'transparent_ratio': args.transparent_ratio,
         'logos_dir': args.logos_dir
@@ -499,7 +499,7 @@ def main():
                                   help='学习率 (默认: 0.001)')
     auto_train_parser.add_argument('--output-dir', type=str, default='models/auto',
                                   help='输出目录 (默认: models/auto)')
-    auto_train_parser.add_argument('--model-selection-samples', type=int, default=1000,
+    auto_train_parser.add_argument('--samples', type=int, default=1000,
                                   help='模型选择时的样本数量 (默认: 1000)')
     auto_train_parser.add_argument('--prediction-limit', type=int, default=100,
                                   help='预测时的图片数量限制 (默认: 100)')
