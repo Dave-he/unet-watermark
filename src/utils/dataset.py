@@ -331,7 +331,7 @@ def get_transparent_watermark_transform(img_size=512):
         
         A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ToTensorV2(),
-    ])
+    ], is_check_shapes=False)
 
 def get_enhanced_train_transform(img_size=512):
     """增强版训练数据变换，包含透明水印优化"""
@@ -370,7 +370,7 @@ def get_enhanced_train_transform(img_size=512):
         
         A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ToTensorV2(),
-    ])
+    ], is_check_shapes=False)
 
 def get_train_transform(img_size=512):
     """获取训练时的数据增强变换"""
@@ -384,7 +384,7 @@ def get_train_transform(img_size=512):
         A.HueSaturationValue(hue_shift_limit=10, sat_shift_limit=20, val_shift_limit=10, p=0.3),
         A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ToTensorV2(),
-    ])
+    ], is_check_shapes=False)
 
 def get_val_transform(img_size=512):
     """获取验证时的数据变换"""
@@ -392,7 +392,7 @@ def get_val_transform(img_size=512):
         A.Resize(height=img_size, width=img_size),
         A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ToTensorV2(),
-    ])
+    ], is_check_shapes=False)
 
 def create_datasets(cfg, use_blurred_mask=False):
     """创建训练集和验证集
