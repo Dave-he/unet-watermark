@@ -109,6 +109,44 @@ class VideoGenerator:
         logger.info(f"共找到 {len(triplets)} 组图片")
         return triplets
     
+    def find_image_pairs(self):
+        """
+        查找原图和修复图的配对
+        
+        Returns:
+            list: 配对的图片路径列表 [(original_path, repaired_path), ...]
+        """
+        pairs = []
+        
+        # 获取修复图目录中的所有图片
+        repair_files = {}
+        repair_file_list = list(Path(self.repair_dir).iterdir())
+        
+        # 添加进度条显示修复图扫描过程
+        for file_path in tqdm(repair_file_list, desc="扫描修复图", unit="个"):
+            if file_path.suffix.lower() in self.image_extensions:
+                # 提取文件名（不含扩展名）
+                base_name = file_path.stem
+                # 移除可能的后缀（如_cleaned, _repaired等）
+                clean_name = base_name.replace('_cleaned', '').replace('_repaired', '').replace('_fixed', '').replace('_partial_cleaned', '')
+                repair_files[clean_name] = str(file_path)
+        
+        # 在原图目录中查找对应的原图
+        input_file_list = list(Path(self.input_dir).iterdir())
+        
+        # 添加进度条显示原图匹配过程
+        for file_path in tqdm(input_file_list, desc="匹配图片对", unit="个"):
+            if file_path.suffix.lower() in self.image_extensions:
+                base_name = file_path.stem
+                
+                # 尝试匹配修复图
+                if base_name in repair_files:
+                    pairs.append((str(file_path), repair_files[base_name]))
+                    logger.debug(f"找到配对: {file_path.name} <-> {Path(repair_files[base_name]).name}")
+        
+        logger.info(f"共找到 {len(pairs)} 对图片")
+        return pairs
+    
     def resize_image_with_padding(self, image_path, target_width, target_height):
         """
         调整图片尺寸，保持宽高比并添加黑边
