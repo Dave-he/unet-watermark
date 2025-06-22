@@ -7,6 +7,7 @@ import sys
 import shutil
 import tempfile
 import torch
+import random
 from tqdm import tqdm
 from pathlib import Path
 from PIL import Image
@@ -64,13 +65,13 @@ def run_sd3(image_path, prompt, output_path, device='cuda'):
     out_img.save(output_path)
     logger.info(f"SD3.5修复完成: {output_path}")
 
-def main(unet_model_path, input_folder, output_folder, prompt, config_path=None, device='cuda'):
+def main(unet_model_path, input_folder, output_folder, prompt, config_path=None, device='cuda', limit=None):
     os.makedirs(output_folder, exist_ok=True)
     cfg = get_cfg_defaults()
     if config_path and os.path.exists(config_path):
         update_config(cfg, config_path)
     model = create_model_from_config(cfg).to(device)
-    checkpoint = torch.load(unet_model_path, map_location=device)
+    checkpoint = torch.load(unet_model_path, map_location=device, weights_only=False)
     if 'model_state_dict' in checkpoint:
         model.load_state_dict(checkpoint['model_state_dict'])
     else:
@@ -80,6 +81,12 @@ def main(unet_model_path, input_folder, output_folder, prompt, config_path=None,
     temp_dir = tempfile.mkdtemp(prefix="sd3_pipeline_")
     try:
         image_files = list(Path(input_folder).glob("*.jpg")) + list(Path(input_folder).glob("*.png"))
+        
+        # 随机选择指定数量的图片
+        if limit and limit < len(image_files):
+            image_files = random.sample(image_files, limit)
+            logger.info(f"随机选择了 {limit} 张图片进行处理")
+        
         for img_path in tqdm(image_files, desc="处理图片"):
             stem = img_path.stem
             mask_path = os.path.join(temp_dir, f"{stem}_mask.png")
@@ -104,5 +111,6 @@ if __name__ == "__main__":
     parser.add_argument('--prompt', type=str, default='Remove watermarks and textual information from images without altering the subject', help='Stable Diffusion修复prompt')
     parser.add_argument('--config', type=str, default=None, help='配置文件路径')
     parser.add_argument('--device', type=str, default='cpu', help='推理设备')
+    parser.add_argument('--limit', type=int, default=3, help='随机选择处理的图片数量，不指定则处理所有图片')
     args = parser.parse_args()
-    main(args.unet_model, args.input, args.output, args.prompt, args.config, args.device)
+    main(args.unet_model, args.input, args.output, args.prompt, args.config, args.device, args.limit)
