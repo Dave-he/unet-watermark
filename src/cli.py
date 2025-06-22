@@ -454,7 +454,7 @@ def main():
                               help='输入图像路径或目录')
     repair_parser.add_argument('--output', type=str, default='data/result',
                               help='输出目录')
-    repair_parser.add_argument('--model', type=str, default='models/checkpoint_epoch_020.pth',
+    repair_parser.add_argument('--model', type=str, default='models/unet_watermark.pth',
                               help='模型文件路径')
     repair_parser.add_argument('--config', type=str, help='配置文件路径')
     repair_parser.add_argument('--device', type=str, 

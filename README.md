@@ -129,6 +129,12 @@ python main.py repair --input data/test --output data/result \
   --model models/unet_watermark.pth \
   --iopaint-model lama \
   --limit 100 --generate-video
+
+
+python main.py repair --input data/test --output data/result \
+  --model /Volumes/192.168.0.41/AI/unet-model/unet_watermark.pth \
+  --iopaint-model lama \
+  --limit 100 --generate-video
 ```
 
 ## 3. 评估
@@ -167,7 +173,7 @@ huggingface-cli upload heyongxian/watermark_images ./data --repo-type=dataset
 
 huggingface-cli upload heyongxian/watermark_stable_diffusion . --repo-type=dataset
 
-modelscope upload  heyongxian/watermark-unet-a100 models/checkpoints --token be07c2b9-5f5d-46fc-ac11-3cebb8e99a87
+modelscope upload  heyongxian/watermark-unet-a100 models/ --token be07c2b9-5f5d-46fc-ac11-3cebb8e99a87
 
 ```
 7z a -t7z -mx9 -mmt=8 -v900m data.7z ./data
