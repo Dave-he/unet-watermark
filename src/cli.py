@@ -124,95 +124,6 @@ def train_command(args):
         print(f"训练过程中出现错误: {str(e)}")
         raise
 
-
-def predict_command(args):
-    """执行预测命令"""
-    print("=" * 60)
-    print("开始水印分割预测")
-    print("=" * 60)
-    
-    # 检查必要参数
-    if not args.input:
-        raise ValueError("预测模式需要指定输入路径 --input")
-    if not args.output:
-        raise ValueError("预测模式需要指定输出路径 --output")
-    if not args.model:
-        raise ValueError("预测模式需要指定模型路径 --model")
-    
-    # 检查文件/目录是否存在
-    if not os.path.exists(args.input):
-        raise FileNotFoundError(f"输入路径不存在: {args.input}")
-    if not os.path.exists(args.model):
-        raise FileNotFoundError(f"模型文件不存在: {args.model}")
-    
-    # 设置设备
-    device = setup_device(args.device or 'auto')
-    
-    # 创建输出目录
-    os.makedirs(args.output, exist_ok=True)
-    
-    # 打印预测信息
-    print(f"输入路径: {args.input}")
-    print(f"输出路径: {args.output}")
-    print(f"模型路径: {args.model}")
-    print(f"阈值: {args.threshold or 0.5}")
-    print()
-    
-    try:
-        # 加载配置（如果提供）
-        cfg = get_cfg_defaults()
-        if args.config:
-            update_config(cfg, args.config)
-        
-        # 创建预测器
-        predictor = WatermarkPredictor(
-            model_path=args.model,
-            config_path=args.config,
-            device=str(device)
-        )
-        
-        # 覆盖阈值配置
-        if args.threshold is not None:
-            predictor.cfg.PREDICT.THRESHOLD = args.threshold
-        
-        # 检查是否使用文件夹迭代模式
-        if getattr(args, 'folder_mode', False) and os.path.isdir(args.input):
-            # 使用新的文件夹迭代处理方法
-            results = predictor.process_folder_iterative(
-                input_folder=args.input,
-                output_folder=args.output,
-                max_iterations=getattr(args, 'max_iterations', 5),
-                watermark_threshold=getattr(args, 'watermark_threshold', 0.01),
-                iopaint_model=getattr(args, 'iopaint_model', 'lama')
-            )
-            
-            print("\n文件夹迭代处理完成！")
-            print(f"总图片数: {results.get('total_images', 0)}")
-            print(f"成功处理: {results.get('successful', 0)}")
-            print(f"部分处理: {results.get('partial', 0)}")
-            print(f"成功率: {results.get('success_rate', 0):.1f}%")
-            print(f"平均迭代次数: {results.get('average_iterations', 0)}")
-        else:
-            # 使用原有的批处理方法
-            results = predictor.process_batch(
-                input_path=args.input,
-                output_dir=args.output,
-                save_mask=args.save_mask or False,
-                remove_watermark=args.save_overlay or False,
-                iopaint_model=getattr(args, 'iopaint_model', 'lama'),
-                limit=args.limit
-            )
-            
-            print("\n预测完成！")
-            print(f"处理图像数量: {len(results)}")
-            print(f"成功: {sum(1 for r in results if r['status'] == 'success')}")
-            print(f"失败: {sum(1 for r in results if r['status'] == 'failed')}")
-        
-    except Exception as e:
-        print(f"预测过程中出现错误: {str(e)}")
-        raise
-
-
 def repair_command(args):
     """文件夹修复命令"""
     print("=" * 60)
@@ -296,9 +207,53 @@ def repair_command(args):
         
         print(f"\n结果摘要已保存: {summary_path}")
         
+        # 检查是否需要使用Stable Diffusion进行额外修复
+        if getattr(args, 'use_sd', False):
+            print("\n开始使用Stable Diffusion进行额外修复...")
+            try:
+                from inpaint import WatermarkRemover
+                
+                # 创建SD修复后的输出目录
+                sd_output_dir = os.path.join(args.output, 'sd_inpaint')
+                os.makedirs(sd_output_dir, exist_ok=True)
+                
+                # 创建水印去除器
+                sd_remover = WatermarkRemover(
+                    model_name=getattr(args, 'sd_model', "stabilityai/stable-diffusion-3-medium-diffusers"),
+                    device=str(device)
+                )
+                
+                # 对修复后的图片进行SD处理
+                sd_remover.process_folder(
+                    input_folder=args.output,  # 使用之前修复的结果作为输入
+                    output_folder=sd_output_dir,
+                    prompt=getattr(args, 'sd_prompt', "clean image without watermarks, text, or logos, high quality, natural"),
+                    negative_prompt=getattr(args, 'sd_negative_prompt', "watermark, text, logo, signature, blurry, low quality, artifacts"),
+                    num_inference_steps=getattr(args, 'sd_steps', 25),
+                    guidance_scale=getattr(args, 'sd_guidance_scale', 6.0),
+                    strength=getattr(args, 'sd_strength', 0.6),
+                    max_mask_ratio=getattr(args, 'sd_max_mask_ratio', 0.25),
+                    min_area=getattr(args, 'sd_min_area', 200),
+                    max_area_ratio=getattr(args, 'sd_max_area_ratio', 0.08),
+                    auto_detect=True,
+                    limit=getattr(args, 'limit', None)
+                )
+                
+                print(f"\nStable Diffusion修复完成！结果保存在: {sd_output_dir}")
+                
+                # 更新视频生成的输入目录为SD修复后的目录
+                final_repair_dir = sd_output_dir
+                
+            except Exception as e:
+                print(f"Stable Diffusion修复失败: {str(e)}")
+                print("将使用原始修复结果生成视频")
+                final_repair_dir = args.output
+        else:
+            final_repair_dir = args.output
+        
         # 检查是否需要生成视频
         if getattr(args, 'generate_video', False):
-            print("开始生成对比视频...")
+            print("\n开始生成对比视频...")
             try:
                 from scripts.video_generator import VideoGenerator
                 
@@ -310,7 +265,7 @@ def repair_command(args):
                 # 创建视频生成器
                 generator = VideoGenerator(
                     input_dir=args.input,
-                    repair_dir=args.output,
+                    repair_dir=final_repair_dir,  # 使用最终修复结果
                     output_dir=args.output,
                     mask_dir=mask_dir,
                     width=getattr(args, 'video_width', 1920),
@@ -473,6 +428,23 @@ def main():
                               help='IOPaint修复模型 (默认: lama)')
     repair_parser.add_argument('--limit', type=int, default=10,
                               help='随机选择的图片数量限制')
+    
+    # 添加Stable Diffusion修复参数
+    repair_parser.add_argument('--use-sd', action='store_true', help='在IOPaint修复后使用Stable Diffusion进行额外修复')
+    repair_parser.add_argument('--sd-model', type=str, default='stabilityai/stable-diffusion-3-medium-diffusers',
+                              help='Stable Diffusion模型名称 (默认: stabilityai/stable-diffusion-3-medium-diffusers)')
+    repair_parser.add_argument('--sd-prompt', type=str, 
+                              default='clean image without watermarks, text, or logos, high quality, natural',
+                              help='SD修复的正向提示词')
+    repair_parser.add_argument('--sd-negative-prompt', type=str,
+                              default='watermark, text, logo, signature, blurry, low quality, artifacts',
+                              help='SD修复的负向提示词')
+    repair_parser.add_argument('--sd-steps', type=int, default=25, help='SD推理步数 (默认: 25)')
+    repair_parser.add_argument('--sd-guidance-scale', type=float, default=6.0, help='SD引导强度 (默认: 6.0)')
+    repair_parser.add_argument('--sd-strength', type=float, default=0.6, help='SD修复强度 (默认: 0.6)')
+    repair_parser.add_argument('--sd-max-mask-ratio', type=float, default=0.25, help='SD最大mask比例 (默认: 0.25)')
+    repair_parser.add_argument('--sd-min-area', type=int, default=200, help='SD最小区域面积 (默认: 200)')
+    repair_parser.add_argument('--sd-max-area-ratio', type=float, default=0.08, help='SD最大区域比例 (默认: 0.08)')
     
     # 添加视频生成参数
     repair_parser.add_argument('--generate-video', action='store_true', help='修复完成后自动生成对比视频')

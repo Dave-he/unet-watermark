@@ -58,9 +58,19 @@ class WatermarkPredictor:
         self.iteration_model_index = 0
         self.last_iteration_detected = True
         
+        # 批处理优化相关
+        self.optimal_batch_size = None
+        self.max_batch_size = getattr(self.cfg.PREDICT, 'MAX_BATCH_SIZE', 32)
+        self.auto_batch_size = getattr(self.cfg.PREDICT, 'AUTO_BATCH_SIZE', True)
+        
         logger.info(f"预测器初始化完成，使用设备: {self.device}")
         logger.info(f"发现可用模型: {len(self.available_models)} 个")
+        logger.info(f"批处理配置: 自动调整={self.auto_batch_size}, 最大批次={self.max_batch_size}")
         self._print_model_info()
+        
+        # 如果是GPU设备，尝试找到最优批处理大小
+        if self.device.type == 'cuda' and self.auto_batch_size:
+            self._find_optimal_batch_size()
     
     def _find_available_models(self, current_model_path):
         """查找models目录下的所有可用模型"""
@@ -79,6 +89,91 @@ class WatermarkPredictor:
         available_models.insert(0, current_model_path)
         
         return available_models
+    
+    def _find_optimal_batch_size(self):
+        """自动寻找最优批处理大小"""
+        logger.info("正在寻找最优批处理大小...")
+        
+        # 创建测试数据
+        test_tensor = torch.randn(1, 3, self.cfg.DATA.IMG_SIZE, self.cfg.DATA.IMG_SIZE).to(self.device)
+        
+        # 从小到大测试批处理大小
+        for batch_size in [2, 4, 8, 16, 24, 32, 48, 64]:
+            if batch_size > self.max_batch_size:
+                break
+                
+            try:
+                # 清理GPU内存
+                if self.device.type == 'cuda':
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                
+                # 创建批次数据
+                batch_tensor = test_tensor.repeat(batch_size, 1, 1, 1)
+                
+                # 测试推理
+                with torch.no_grad():
+                    start_time = torch.cuda.Event(enable_timing=True)
+                    end_time = torch.cuda.Event(enable_timing=True)
+                    
+                    start_time.record()
+                    output = self.model(batch_tensor)
+                    end_time.record()
+                    
+                    torch.cuda.synchronize()
+                    elapsed_time = start_time.elapsed_time(end_time)
+                
+                # 检查GPU内存使用情况
+                memory_used = torch.cuda.memory_allocated() / 1024**3  # GB
+                memory_total = torch.cuda.get_device_properties(0).total_memory / 1024**3  # GB
+                memory_ratio = memory_used / memory_total
+                
+                logger.info(f"批次大小 {batch_size}: 时间={elapsed_time:.2f}ms, 内存使用={memory_ratio:.1%}")
+                
+                # 如果内存使用超过85%，停止增加批次大小
+                if memory_ratio > 0.85:
+                    logger.info(f"内存使用率过高，选择批次大小: {batch_size // 2 if batch_size > 2 else 2}")
+                    self.optimal_batch_size = max(2, batch_size // 2)
+                    break
+                
+                self.optimal_batch_size = batch_size
+                
+                # 清理测试数据
+                del batch_tensor, output
+                
+            except RuntimeError as e:
+                if "out of memory" in str(e):
+                    logger.info(f"批次大小 {batch_size} 超出内存限制，选择: {batch_size // 2 if batch_size > 2 else 2}")
+                    self.optimal_batch_size = max(2, batch_size // 2)
+                    break
+                else:
+                    raise e
+        
+        # 清理测试数据
+        del test_tensor
+        if self.device.type == 'cuda':
+            torch.cuda.empty_cache()
+        
+        if self.optimal_batch_size is None:
+            self.optimal_batch_size = 8  # 默认值
+        
+        logger.info(f"最优批处理大小: {self.optimal_batch_size}")
+    
+    def _get_gpu_memory_info(self):
+        """获取GPU内存信息"""
+        if self.device.type != 'cuda':
+            return None
+        
+        memory_allocated = torch.cuda.memory_allocated() / 1024**3  # GB
+        memory_cached = torch.cuda.memory_reserved() / 1024**3  # GB
+        memory_total = torch.cuda.get_device_properties(0).total_memory / 1024**3  # GB
+        
+        return {
+            'allocated': memory_allocated,
+            'cached': memory_cached,
+            'total': memory_total,
+            'usage_ratio': memory_allocated / memory_total
+        }
 
     def _optimize_mask(self, mask):
         """优化预测的mask，使其稍微大一些，保证连通性，抑制噪声"""
@@ -305,6 +400,122 @@ class WatermarkPredictor:
         
         return mask_processed
     
+    def predict_mask_batch(self, image_paths, batch_size=None):
+        """批量预测多张图像的水印掩码，提升GPU利用率"""
+        if batch_size is None:
+            # 优先使用自动找到的最优批处理大小
+            if self.optimal_batch_size is not None:
+                batch_size = self.optimal_batch_size
+            else:
+                batch_size = getattr(self.cfg.PREDICT, 'BATCH_SIZE', 8)
+        
+        # 记录开始时的GPU内存状态
+        if self.device.type == 'cuda':
+            initial_memory = self._get_gpu_memory_info()
+            logger.info(f"开始批量预测，初始GPU内存使用: {initial_memory['usage_ratio']:.1%}")
+        
+        results = []
+        total_images = len(image_paths)
+        
+        # 分批处理
+        for i in range(0, total_images, batch_size):
+            batch_paths = image_paths[i:i + batch_size]
+            batch_images = []
+            batch_original_sizes = []
+            valid_indices = []
+            
+            # 加载并预处理批次中的所有图像
+            for idx, image_path in enumerate(batch_paths):
+                try:
+                    image = cv2.imread(image_path)
+                    if image is None:
+                        logger.warning(f"无法加载图像: {image_path}")
+                        results.append(None)
+                        continue
+                    
+                    # 记录原始尺寸
+                    original_height, original_width = image.shape[:2]
+                    batch_original_sizes.append((original_height, original_width))
+                    
+                    # 转换为RGB
+                    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                    
+                    # 应用变换
+                    if self.transform:
+                        transformed = self.transform(image=image_rgb)
+                        input_tensor = transformed['image']
+                    else:
+                        # 如果没有变换，手动处理
+                        image_resized = cv2.resize(image_rgb, (self.cfg.DATA.IMG_SIZE, self.cfg.DATA.IMG_SIZE))
+                        input_tensor = torch.from_numpy(image_resized.transpose(2, 0, 1)).float()
+                        input_tensor = input_tensor / 255.0
+                    
+                    batch_images.append(input_tensor)
+                    valid_indices.append(len(results))
+                    results.append(None)  # 占位符
+                    
+                except Exception as e:
+                    logger.error(f"预处理图像失败 {image_path}: {str(e)}")
+                    results.append(None)
+            
+            if not batch_images:
+                continue
+            
+            # 将批次数据堆叠成tensor
+            try:
+                batch_tensor = torch.stack(batch_images).to(self.device)
+                
+                # 批量推理
+                with torch.no_grad():
+                    batch_output = self.model(batch_tensor)
+                    
+                    # 处理输出
+                    if isinstance(batch_output, dict):
+                        batch_masks = batch_output['out'].cpu().numpy()
+                    else:
+                        batch_masks = batch_output.cpu().numpy()
+                
+                # 后处理每个mask
+                threshold = getattr(self.cfg.PREDICT, 'THRESHOLD', 0.5)
+                
+                for j, (mask, (orig_h, orig_w)) in enumerate(zip(batch_masks, batch_original_sizes)):
+                    # 调整大小到原图尺寸
+                    mask_resized = cv2.resize(mask[0], (orig_w, orig_h))
+                    
+                    # 二值化
+                    mask_binary = (mask_resized > threshold).astype(np.uint8) * 255
+                    
+                    # 后处理
+                    mask_processed = self._post_process_mask(mask_binary)
+                    
+                    # 更新结果
+                    results[valid_indices[j]] = mask_processed
+                
+                # 清理GPU内存
+                del batch_tensor, batch_output
+                if self.device.type == 'cuda':
+                    torch.cuda.empty_cache()
+                    
+            except Exception as e:
+                logger.error(f"批量推理失败: {str(e)}")
+                # 回退到单张处理
+                for j, path in enumerate(batch_paths):
+                    if j < len(valid_indices):
+                        try:
+                            mask = self.predict_mask(path)
+                            results[valid_indices[j]] = mask
+                        except Exception as single_e:
+                            logger.error(f"单张处理也失败 {path}: {str(single_e)}")
+                            results[valid_indices[j]] = None
+        
+        # 记录结束时的GPU内存状态
+        if self.device.type == 'cuda':
+            final_memory = self._get_gpu_memory_info()
+            logger.info(f"批量预测完成，最终GPU内存使用: {final_memory['usage_ratio']:.1%}")
+            logger.info(f"批量预测效率: 使用批次大小 {batch_size} 处理 {len(image_paths)} 张图片")
+        
+        return results
+    
     def _post_process_mask(self, mask):
         """后处理掩码"""
         # 形态学操作
@@ -417,8 +628,8 @@ class WatermarkPredictor:
             shutil.rmtree(temp_dir, ignore_errors=True)
     
     def _stage1_batch_mask_prediction(self, image_status, temp_dir, iteration, watermark_threshold):
-        """第一阶段：批量掩码预测"""
-        logger.info("第一阶段：批量掩码预测")
+        """第一阶段：批量掩码预测（优化版）"""
+        logger.info("第一阶段：批量掩码预测（使用批处理优化）")
         
         masks_generated = False
         iteration_detected = False
@@ -432,23 +643,48 @@ class WatermarkPredictor:
         current_model_name = os.path.basename(self.current_model_path)
         logger.info(f"本轮迭代使用模型: {current_model_name}")
         
-        # 使用进度条显示预测进度
-        progress_bar = tqdm(pending_images, desc=f"预测掩码(模型:{current_model_name[:15]})", unit="张")
+        # 准备批处理数据
+        image_paths = [info['current_path'] for name, info in pending_images]
+        image_names = [name for name, info in pending_images]
         
-        for image_name, info in progress_bar:
+        # 获取批处理大小
+        if self.optimal_batch_size is not None:
+            batch_size = self.optimal_batch_size
+            logger.info(f"使用自动优化的批处理大小: {batch_size}")
+        else:
+            batch_size = getattr(self.cfg.PREDICT, 'BATCH_SIZE', 8)
+            logger.info(f"使用配置的批处理大小: {batch_size}")
+        
+        # 批量预测掩码
+        logger.info(f"开始批量预测 {len(image_paths)} 张图片...")
+        batch_masks = self.predict_mask_batch(image_paths, batch_size)
+        
+        # 处理批量预测结果
+        progress_bar = tqdm(zip(image_names, pending_images, batch_masks), 
+                           desc=f"处理结果(模型:{current_model_name[:15]})", 
+                           total=len(pending_images), unit="张")
+        
+        for image_name, (name, info), mask in progress_bar:
             progress_bar.set_postfix({'当前': image_name[:15] + '...'})
             
             try:
-                # 使用当前模型预测
-                mask, model_used, watermark_ratio = self.predict_mask_single_model(
-                    info['current_path']
-                )
+                if mask is None:
+                    logger.error(f"{image_name}: 掩码预测失败")
+                    info['completed'] = True
+                    info['iterations'] = iteration
+                    continue
                 
                 # 优化预测的mask
                 mask = self._optimize_mask(mask)
                 
+                # 计算水印面积比例
+                image = cv2.imread(info['current_path'])
+                total_pixels = image.shape[0] * image.shape[1]
+                watermark_pixels = np.sum(mask > 0)
+                watermark_ratio = watermark_pixels / total_pixels
+                
                 info['final_watermark_ratio'] = watermark_ratio
-                info['detection_model'] = model_used
+                info['detection_model'] = current_model_name
                 
                 # 累积mask：将当前mask的白色区域与之前的mask合并
                 if info['accumulated_mask'] is None:
@@ -478,11 +714,11 @@ class WatermarkPredictor:
                 cv2.imwrite(mask_path, mask)
                 info['mask_path'] = mask_path
                 
-                logger.info(f"{image_name}: 检测到水印 {watermark_ratio:.6f} (模型: {model_used})")
+                logger.info(f"{image_name}: 检测到水印 {watermark_ratio:.6f} (模型: {current_model_name})")
                 masks_generated = True
                 
             except Exception as e:
-                logger.error(f"{image_name}: 掩码预测失败: {str(e)}")
+                logger.error(f"{image_name}: 掩码处理失败: {str(e)}")
                 info['completed'] = True
                 info['iterations'] = iteration
         
@@ -598,7 +834,7 @@ class WatermarkPredictor:
                 # 准备当前遍的iopaint命令
                 cmd = [
                     'iopaint', 'run',
-                    '--model', model_name,
+                    '--model', "lama" if i == 0 else model_name,
                     '--device', self.device.type,
                     '--image', current_input_dir,
                     '--mask', mask_dir,

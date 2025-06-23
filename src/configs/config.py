@@ -76,6 +76,8 @@ _C.PREDICT = CN()
 _C.PREDICT.INPUT_PATH = "data/input"  # 输入图像目录
 _C.PREDICT.OUTPUT_DIR = "data/output"  # 输出掩码目录
 _C.PREDICT.BATCH_SIZE = 8  # 批处理大小
+_C.PREDICT.AUTO_BATCH_SIZE = True  # 自动调整批处理大小
+_C.PREDICT.MAX_BATCH_SIZE = 32  # 最大批处理大小
 _C.PREDICT.THRESHOLD = 0.5  # 二值化阈值
 _C.PREDICT.POST_PROCESS = True  # 是否应用后处理
 

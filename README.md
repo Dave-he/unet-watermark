@@ -126,8 +126,8 @@ python main.py repair --input data/train/watermarked --output data/result \
 
 
 python main.py repair --input data/test --output data/result \
-  --model models/unet_watermark.pth \
-  --iopaint-model lama \
+  --model models/final_model_epoch_247.pth \
+  --iopaint-model runwayml/stable-diffusion-v1-5 \
   --limit 100 --generate-video
 
 
