@@ -378,7 +378,7 @@ def main():
     # 训练命令
     train_parser = subparsers.add_parser('train', help='训练模型')
     train_parser.add_argument('--config', type=str, help='配置文件路径',
-                             default="src/configs/unet_watermark.yaml")
+                             default="src/configs/unet_watermark_large.yaml")
     train_parser.add_argument('--device', type=str, 
                              default='auto', help='计算设备 (默认: auto)')
     train_parser.add_argument('--data-dir', type=str, help='数据集根目录')
@@ -411,7 +411,8 @@ def main():
                               help='输出目录')
     repair_parser.add_argument('--model', type=str, default='models/unet_watermark.pth',
                               help='模型文件路径')
-    repair_parser.add_argument('--config', type=str, help='配置文件路径')
+    repair_parser.add_argument('--config', type=str, help='配置文件路径',
+                              default="src/configs/unet_watermark_large.yaml")
     repair_parser.add_argument('--device', type=str, 
                               default='auto', help='计算设备 (默认: auto)')
     repair_parser.add_argument('--threshold', type=float, default=0.3, 
@@ -463,7 +464,7 @@ def main():
     auto_train_parser = subparsers.add_parser('auto', help='自动循环训练')
     auto_train_parser.add_argument('--config-file', type=str, help='JSON配置文件路径')
     auto_train_parser.add_argument('--config', type=str, help='训练配置文件路径',
-                                  default='src/configs/unet_watermark.yaml')
+                                  default='src/configs/unet_watermark_large.yaml')
     auto_train_parser.add_argument('--project-root', type=str, help='项目根目录')
     auto_train_parser.add_argument('--max-cycles', type=int, default=100,
                                   help='最大循环次数 (默认: 100)')
