@@ -126,7 +126,9 @@ python main.py repair --input data/train/watermarked --output data/result \
 
 
 # 结合其他功能使用
-python main.py repair --input data/test --output data/results --model models2/final_model_epoch_245.pth --use-ocr --generate-video
+python main.py repair --config src/configs/unet_watermark.yaml \
+ --input data/test --output data/results \
+ --model models2/final_model_epoch_245.pth --use-ocr --generate-video
 
 
 python main.py repair --input data/test --output data/result \
