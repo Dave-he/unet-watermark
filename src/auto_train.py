@@ -233,7 +233,10 @@ class AutoTrainingLoop:
                 output_folder=prediction_dir,
                 max_iterations=3,
                 watermark_threshold=0.1,
-                limit=limit
+                limit=limit,
+                use_ocr=False,
+                ocr_languages=['en', 'ch_sim'],
+                ocr_engine='easy'
             )
             
             logger.info(f"预测完成，处理了 {len(test_images)} 张图片")

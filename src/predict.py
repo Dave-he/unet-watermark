@@ -540,21 +540,35 @@ class WatermarkPredictor:
         
         return new_mask
     
-    def _generate_text_mask(self, image_path, ocr_languages=None):
+    def _generate_text_mask(self, image_path, ocr_languages=None, ocr_engine='easy'):
         """生成文字区域掩码"""
         try:
-            # 导入OCR模块
-            from ocr.easy_ocr import TextMaskGenerator
-            
             # 设置默认语言
             if ocr_languages is None:
                 ocr_languages = ['en', 'ch_sim']
             
-            # 创建文字掩码生成器
-            generator = TextMaskGenerator(languages=ocr_languages, verbose=False)
-            
-            # 生成文字掩码
-            text_mask = generator.generate_text_mask(image_path, output_path=None, visualize=False)
+            # 根据选择的OCR引擎导入相应模块
+            if ocr_engine == 'paddle':
+                from ocr.paddle_ocr import PaddleOCRProcessor
+                
+                # 创建PaddleOCR处理器
+                processor = PaddleOCRProcessor()
+                
+                # 生成文字掩码
+                text_mask = processor.create_mask_image(image_path)
+                
+            elif ocr_engine == 'easy':
+                from ocr.easy_ocr import TextMaskGenerator
+                
+                # 创建EasyOCR文字掩码生成器
+                generator = TextMaskGenerator(languages=ocr_languages, verbose=False)
+                
+                # 生成文字掩码
+                text_mask = generator.generate_text_mask(image_path, output_path=None, visualize=False)
+                
+            else:
+                logger.error(f"不支持的OCR引擎: {ocr_engine}")
+                return None
             
             return text_mask
             
@@ -567,7 +581,7 @@ class WatermarkPredictor:
     
     def process_folder_iterative(self, input_folder, output_folder, max_iterations=5,
                             watermark_threshold=0.01, iopaint_model='lama', limit=None,
-                            use_ocr=False, ocr_languages=None):
+                            use_ocr=False, ocr_languages=None, ocr_engine='easy'):
         """文件夹迭代修复模式 - 核心功能"""
         # 创建输出目录和临时工作目录
         os.makedirs(output_folder, exist_ok=True)
@@ -623,7 +637,7 @@ class WatermarkPredictor:
                 
                 # 第一阶段：批量掩码预测
                 masks_generated, iteration_detected = self._stage1_batch_mask_prediction(
-                    image_status, temp_dir, iteration, watermark_threshold, use_ocr, ocr_languages
+                    image_status, temp_dir, iteration, watermark_threshold, use_ocr, ocr_languages, ocr_engine
                 )
                 
                 # 更新迭代检测状态
@@ -655,7 +669,7 @@ class WatermarkPredictor:
             # 清理临时目录
             shutil.rmtree(temp_dir, ignore_errors=True)
     
-    def _stage1_batch_mask_prediction(self, image_status, temp_dir, iteration, watermark_threshold, use_ocr=False, ocr_languages=None):
+    def _stage1_batch_mask_prediction(self, image_status, temp_dir, iteration, watermark_threshold, use_ocr=False, ocr_languages=None, ocr_engine='easy'):
         """第一阶段：批量掩码预测（优化版）"""
         logger.info("第一阶段：批量掩码预测（使用批处理优化）")
         
@@ -708,11 +722,11 @@ class WatermarkPredictor:
                 # 如果启用OCR，生成文字掩码并合并
                 if use_ocr:
                     try:
-                        text_mask = self._generate_text_mask(info['current_path'], ocr_languages)
+                        text_mask = self._generate_text_mask(info['current_path'], ocr_languages, ocr_engine)
                         if text_mask is not None:
                             # 将文字掩码与水印掩码合并
                             mask = cv2.bitwise_or(mask, text_mask)
-                            logger.info(f"{image_name}: 已合并文字掩码")
+                            logger.info(f"{image_name}: 已合并文字掩码 (引擎: {ocr_engine.upper()}OCR)")
                     except Exception as e:
                         logger.warning(f"{image_name}: OCR处理失败: {str(e)}")
                 

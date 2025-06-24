@@ -34,59 +34,86 @@ class PaddleOCRProcessor:
         # 确保输出目录存在
         os.makedirs(self.output_dir, exist_ok=True)
     
-    def create_mask_image(self, image_path: str, ocr_result: Dict[str, Any]) -> Image.Image:
-        """根据OCR结果创建文字区域的mask二值化图
+    def create_mask_image(self, image_path: str, output_path: Optional[str] = None) -> Optional[np.ndarray]:
+        """
+        根据OCR结果创建文字区域的mask二值化图
         
         Args:
-            image_path: 图片路径
-            ocr_result: OCR识别结果
+            image_path: 输入图片路径
+            output_path: 输出mask图片路径，如果为None则不保存
             
         Returns:
-            PIL.Image: mask图像
+            mask图像的numpy数组，如果失败返回None
         """
-        # 打开原图获取尺寸
-        with Image.open(image_path) as img:
-            width, height = img.size
-        
-        # 创建黑色背景的mask图像
-        mask = Image.new('L', (width, height), 0)
-        draw = ImageDraw.Draw(mask)
-        
-        # 从ocrResults中获取坐标数据
-        polys_to_use = None
-        if 'ocrResults' in ocr_result and ocr_result['ocrResults']:
-            pruned_result = ocr_result['ocrResults'][0].get('prunedResult', {})
+        try:
+            # 读取图片
+            with Image.open(image_path) as img:
+                width, height = img.size
+                image_array = np.array(img)
             
-            # 优先使用dt_polys（检测到的文字区域多边形）
-            if 'dt_polys' in pruned_result and pruned_result['dt_polys']:
-                polys_to_use = pruned_result['dt_polys']
-
-            elif 'rec_polys' in pruned_result and pruned_result['rec_polys']:
-                polys_to_use = pruned_result['rec_polys']
+            # 发送OCR请求
+            ocr_result = self.ocr_request(image_path)
+            if not ocr_result:
+                print(f"OCR识别失败或无文字: {image_path}")
+                # 返回空的mask而不是None，保持与EasyOCR一致的行为
+                return np.zeros((height, width), dtype=np.uint8)
+            
+            # 创建mask图像
+            mask = np.zeros((height, width), dtype=np.uint8)
+            
+            # 从ocrResults中获取坐标数据
+            polys_to_use = None
+            if 'ocrResults' in ocr_result and ocr_result['ocrResults']:
+                pruned_result = ocr_result['ocrResults'][0].get('prunedResult', {})
                 
-            elif 'rec_boxes' in pruned_result and pruned_result['rec_boxes']:
-                # 如果只有矩形框，转换为多边形
-                polys_to_use = []
-                for box in pruned_result['rec_boxes']:
-                    # box格式: [x1, y1, x2, y2]
-                    x1, y1, x2, y2 = box
-                    poly = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
-                    polys_to_use.append(poly)
+                # 优先使用dt_polys（检测到的文字区域多边形）
+                if 'dt_polys' in pruned_result and pruned_result['dt_polys']:
+                    polys_to_use = pruned_result['dt_polys']
+
+                elif 'rec_polys' in pruned_result and pruned_result['rec_polys']:
+                    polys_to_use = pruned_result['rec_polys']
+                    
+                elif 'rec_boxes' in pruned_result and pruned_result['rec_boxes']:
+                    # 如果只有矩形框，转换为多边形
+                    polys_to_use = []
+                    for box in pruned_result['rec_boxes']:
+                        # box格式: [x1, y1, x2, y2]
+                        x1, y1, x2, y2 = box
+                        poly = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
+                        polys_to_use.append(poly)
             
-        
-        if polys_to_use:
-            for i, poly in enumerate(polys_to_use):
-                # 将多边形坐标转换为PIL可用的格式
-                points = []
-                for point in poly:
-                    points.extend([int(point[0]), int(point[1])])
-                # 绘制白色填充的多边形
-                draw.polygon(points, fill=255)
-                print(f"Drew polygon {i+1}: {poly}")
-        else:
-            print("No polygon data found in OCR result")
-        
-        return mask
+            if polys_to_use:
+                for i, poly in enumerate(polys_to_use):
+                    # 将多边形坐标转换为numpy数组
+                    points = np.array([[int(point[0]), int(point[1])] for point in poly], dtype=np.int32)
+                    # 使用PIL绘制多边形到mask
+                    mask_img = Image.fromarray(mask)
+                    draw = ImageDraw.Draw(mask_img)
+                    flat_points = [coord for point in points for coord in point]
+                    draw.polygon(flat_points, fill=255)
+                    mask = np.array(mask_img)
+                    print(f"Drew polygon {i+1}: {poly}")
+            else:
+                print("No polygon data found in OCR result")
+            
+            # 保存mask图像
+            if output_path:
+                mask_img = Image.fromarray(mask)
+                mask_img.save(output_path)
+                print(f"Mask图像已保存: {output_path}")
+            
+            return mask
+            
+        except Exception as e:
+            print(f"创建mask图像失败: {str(e)}")
+            # 返回空的mask而不是None，保持一致性
+            try:
+                with Image.open(image_path) as img:
+                    width, height = img.size
+                    return np.zeros((height, width), dtype=np.uint8)
+            except:
+                pass
+            return None
     
     def ocr_request(self, image_path: str) -> Optional[Dict[str, Any]]:
         """向OCR API发送请求
