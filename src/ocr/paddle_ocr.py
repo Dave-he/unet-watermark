@@ -2,9 +2,12 @@
 
 
 import base64
+import os
+from threading import Thread
 import requests
 import os
 import glob
+import random
 from PIL import Image, ImageDraw
 import numpy as np
 from typing import Optional, List, Dict, Any
@@ -34,7 +37,7 @@ class PaddleOCRProcessor:
         # 确保输出目录存在
         os.makedirs(self.output_dir, exist_ok=True)
     
-    def create_mask_image(self, image_path: str, output_path: Optional[str] = None) -> Optional[np.ndarray]:
+    def create_mask_image(self, image_path: str, ocr_result: Dict[str, Any], output_path: Optional[str] = None) -> Optional[np.ndarray]:
         """
         根据OCR结果创建文字区域的mask二值化图
         
@@ -51,12 +54,13 @@ class PaddleOCRProcessor:
                 width, height = img.size
                 image_array = np.array(img)
             
-            # 发送OCR请求
-            ocr_result = self.ocr_request(image_path)
             if not ocr_result:
-                print(f"OCR识别失败或无文字: {image_path}")
-                # 返回空的mask而不是None，保持与EasyOCR一致的行为
-                return np.zeros((height, width), dtype=np.uint8)
+                # 发送OCR请求
+                ocr_result = self.ocr_request(image_path)
+                if not ocr_result:
+                    print(f"OCR识别失败或无文字: {image_path}")
+                    # 返回空的mask而不是None，保持与EasyOCR一致的行为
+                    return np.zeros((height, width), dtype=np.uint8)
             
             # 创建mask图像
             mask = np.zeros((height, width), dtype=np.uint8)
@@ -144,7 +148,7 @@ class PaddleOCRProcessor:
             print(f"Error processing {image_path}: {str(e)}")
             return None
     
-    def process_single_image(self, image_path: str, save_mask: bool = True) -> Optional[Image.Image]:
+    def process_single_image(self, image_path: str, save_mask: bool = True, save_result: bool = True) -> Optional[Image.Image]:
         """处理单张图片
         
         Args:
@@ -161,17 +165,34 @@ class PaddleOCRProcessor:
         if ocr_result is None:
             return None
         
+        # 获取文件名（不含扩展名）
+        base_name = os.path.splitext(os.path.basename(image_path))[0]
+
+        if save_result:
+            os.makedirs(os.path.join(self.output_dir, "res"), exist_ok=True)
+            for i, res in enumerate(ocr_result["ocrResults"]):
+                print(res["prunedResult"])
+                ocr_img_path=  os.path.join(self.output_dir, "res", f"{base_name}_{i}.jpg")
+                with open(ocr_img_path, "wb") as f:
+                    f.write(base64.b64decode(res["ocrImage"]))
+                print(f"Output image saved at {ocr_img_path}")
+
         # 创建mask图像
-        mask_image = self.create_mask_image(image_path, ocr_result)
+        mask_array = self.create_mask_image(image_path, ocr_result)
         
-        if save_mask:
-            # 获取文件名（不含扩展名）
-            base_name = os.path.splitext(os.path.basename(image_path))[0]
-            mask_path = os.path.join(self.output_dir, f"{base_name}_mask.png")
+        if save_mask and mask_array is not None:
+            os.makedirs(os.path.join(self.output_dir, "mask"), exist_ok=True)
+            mask_path = os.path.join(self.output_dir, "mask", f"{base_name}.png")
+            # 将numpy数组转换为PIL Image并保存
+            mask_image = Image.fromarray(mask_array)
             mask_image.save(mask_path)
             print(f"Mask image saved: {mask_path}")
+            return mask_image
+        elif mask_array is not None:
+            # 如果不保存文件，仍然返回PIL Image对象
+            return Image.fromarray(mask_array)
         
-        return mask_image
+        return None
     
     def get_image_files(self, directory: Optional[str] = None) -> List[str]:
         """获取目录下所有支持的图片文件
@@ -192,11 +213,13 @@ class PaddleOCRProcessor:
         
         return image_files
     
-    def batch_process(self, input_directory: Optional[str] = None) -> None:
-        """批量处理目录下的所有图片
+    def batch_process(self, input_directory: Optional[str] = None, limit: Optional[int] = None) -> None:
+        """
+        批量处理目录下的所有图片
         
         Args:
             input_directory: 输入目录，默认使用self.input_dir
+            limit: 限制处理的图片数量，如果为None则处理所有图片
         """
         if input_directory is None:
             input_directory = self.input_dir
@@ -212,35 +235,57 @@ class PaddleOCRProcessor:
             print("No image files found in input directory.")
             return
         
+        # 如果设置了limit参数，随机选择指定数量的图片
+        if limit is not None and limit > 0:
+            if limit < len(image_files):
+                image_files = random.sample(image_files, limit)
+                print(f"Randomly selected {limit} image(s) from {len(self.get_image_files(input_directory))} total images")
+            else:
+                print(f"Limit ({limit}) is greater than available images ({len(image_files)}), processing all images")
+        
         print(f"Found {len(image_files)} image(s) to process:")
         for img_file in image_files:
             print(f"  - {os.path.basename(img_file)}")
         print()
         
+        import time
         # 处理每张图片
         for image_file in image_files:
+            time.sleep(0.1)
             self.process_single_image(image_file)
         
         print("Batch processing completed!")
 
 
-# 保持向后兼容性的函数
-def create_mask_image(image_path, ocr_result):
-    """根据OCR结果创建文字区域的mask二值化图（向后兼容）"""
-    processor = PaddleOCRProcessor()
-    return processor.create_mask_image(image_path, ocr_result)
-
-def process_image(image_path):
-    """处理单张图片（向后兼容）"""
-    processor = PaddleOCRProcessor()
-    processor.process_single_image(image_path)
 
 def main():
-    """主函数：批量处理input目录下的所有图片（向后兼容）"""
-    processor = PaddleOCRProcessor()
-    processor.batch_process()
+    """
+    主函数：批量处理图片
+    
+    Args:
+        input_dir (str, optional): 输入目录路径，默认为 './input'
+        output_dir (str, optional): 输出目录路径，默认为 './output'
+        api_url (str, optional): OCR API地址，默认为 'http://localhost:8080/ocr'
+        limit (int, optional): 随机选择处理的图片数量，默认处理所有图片
+    """
+
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='PaddleOCR批量处理工具')
+    parser.add_argument('--input', '-i', type=str, default='/Users/hyx/unet-watermark/data/test', 
+                       help='输入目录路径 (默认: ./input)')
+    parser.add_argument('--output', '-o', type=str, default='./output',
+                       help='输出目录路径 (默认: ./output)')
+    parser.add_argument('--api-url', '-u', type=str, default='http://localhost:8080/ocr',
+                       help='OCR API地址')
+    parser.add_argument('--limit', '-l', type=int, default=10,
+                       help='随机选择处理的图片数量')
+    
+    args = parser.parse_args()
+
+    processor = PaddleOCRProcessor(input_dir=args.input, output_dir=args.output, api_url=args.api_url)
+    processor.batch_process(limit=args.limit)
 
 
 if __name__ == "__main__":
     main()
-
