@@ -173,6 +173,35 @@ iopaint run --model=lama \
 
 ```
 
+# 飞浆OCR服务部署
+
+https://paddlepaddle.github.io/PaddleOCR/latest/version3.x/pipeline_usage/OCR.html
+
+## 环境搭建
+安装飞浆[https://www.paddlepaddle.org.cn/install/quick]
+安装ocr套件[https://paddlepaddle.github.io/PaddleOCR/latest/version3.x/installation.html]
+
+
+```bash
+python -m pip install paddlepaddle==3.0.0 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
+
+python -m pip install paddleocr
+
+pip install setuptools
+```
+
+
+
+## 服务启动
+```bash
+paddlex --install serving
+
+paddlex --serve --pipeline OCR
+```
+
+## 调用demo
+
+
 
 # 上传数据集
 
