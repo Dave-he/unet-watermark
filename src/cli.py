@@ -165,6 +165,8 @@ def repair_command(args):
     print(f"IOPaint模型: {args.iopaint_model}")
     if hasattr(args, 'limit') and args.limit:
         print(f"处理图片限制: {args.limit} 张")
+    if getattr(args, 'use_ocr', False):
+        print(f"启用OCR文字检测: 是 (语言: {', '.join(args.ocr_languages)})")
     if getattr(args, 'generate_video', False):
         print(f"生成对比视频: 是 ({args.video_width}x{args.video_height}, {args.fps}fps, {args.duration}s/图)")
     print()
@@ -190,7 +192,9 @@ def repair_command(args):
             max_iterations=args.max_iterations,
             watermark_threshold=args.watermark_threshold,
             iopaint_model=args.iopaint_model,
-            limit=getattr(args, 'limit', None)
+            limit=getattr(args, 'limit', None),
+            use_ocr=getattr(args, 'use_ocr', False),
+            ocr_languages=getattr(args, 'ocr_languages', ['en', 'ch_sim'])
         )
         
         print("\n文件夹修复完成！")
@@ -429,6 +433,12 @@ def main():
                               help='IOPaint修复模型 (默认: lama)')
     repair_parser.add_argument('--limit', type=int, default=10,
                               help='随机选择的图片数量限制')
+    
+    # 添加OCR文字掩码处理参数
+    repair_parser.add_argument('--use-ocr', action='store_true', 
+                              help='启用OCR文字检测，将文字掩码与水印掩码合并')
+    repair_parser.add_argument('--ocr-languages', type=str, nargs='+', default=['en', 'ch_sim'],
+                              help='OCR支持的语言列表 (默认: en ch_sim)')
     
     # 添加Stable Diffusion修复参数
     repair_parser.add_argument('--use-sd', action='store_true', help='在IOPaint修复后使用Stable Diffusion进行额外修复')

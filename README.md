@@ -125,10 +125,8 @@ python main.py repair --input data/train/watermarked --output data/result \
   --limit 100 --generate-video
 
 
-python main.py repair --input data/test --output data/result \
-  --model models/final_model_epoch_247.pth \
-  --iopaint-model runwayml/stable-diffusion-v1-5 \
-  --limit 100 --generate-video
+# 结合其他功能使用
+python main.py repair --input data/test --output data/results --model models2/final_model_epoch_245.pth --use-ocr --generate-video
 
 
 python main.py repair --input data/test --output data/result \
@@ -164,6 +162,16 @@ python src/scripts/video_generator.py --input data/train/watermarked --repair da
 python src/scripts/video_generator.py -i data/original -r data/repaired -o videos -w 1920 -h 1080 -d 3 -f 24 -v
 ```
 
+# ocr识别
+```
+python src/ocr/easy_ocr.py data/test2 data/ocr
+
+处理
+iopaint run --model=lama \                    
+  --device=cpu --image=data/test2 --mask=data/ocr \
+  --output=data/out1
+
+```
 
 
 # 上传数据集
