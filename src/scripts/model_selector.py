@@ -17,6 +17,9 @@ from tqdm import tqdm
 import logging
 from datetime import datetime
 from typing import List, Dict, Tuple, Optional
+from multiprocessing import Pool, Manager, cpu_count
+from functools import partial
+import time
 
 # 添加项目根目录到路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -27,6 +30,162 @@ from configs.config import get_cfg_defaults, update_config
 # 设置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+def evaluate_single_model(args):
+    """
+    评估单个模型的工作函数（用于多进程）
+    
+    Args:
+        args: 包含模型路径、图片列表、配置等参数的元组
+        
+    Returns:
+        dict: 模型评估结果
+    """
+    model_path, selected_images, config_path, device, output_dir = args
+    model_name = os.path.basename(model_path)
+    
+    # 为每个进程设置独立的日志
+    process_logger = logging.getLogger(f'model_eval_{model_name}')
+    
+    try:
+        # 创建预测器
+        from predict import WatermarkPredictor
+        predictor = WatermarkPredictor(
+            model_path=model_path,
+            config_path=config_path,
+            device=device
+        )
+        
+        # 存储当前模型的结果
+        model_results = {
+            'model_path': model_path,
+            'model_name': model_name,
+            'model_info': predictor.model_info,
+            'predictions': []
+        }
+        
+        # 对每张图片进行预测
+        for image_path in selected_images:
+            image_name = os.path.basename(image_path)
+            
+            try:
+                # 预测水印掩码
+                mask = predictor.predict_mask(image_path)
+                
+                # 读取原图获取尺寸
+                image = cv2.imread(image_path)
+                
+                # 计算水印指标
+                metrics = calculate_watermark_metrics(mask, image.shape[:2])
+                
+                # 保存掩码图片
+                mask_filename = f"{Path(image_name).stem}_{model_name.replace('.pth', '')}_mask.png"
+                mask_path = os.path.join(output_dir, mask_filename)
+                cv2.imwrite(mask_path, mask)
+                
+                # 存储预测结果
+                prediction_result = {
+                    'image_name': image_name,
+                    'image_path': image_path,
+                    'mask_path': mask_path,
+                    'metrics': metrics,
+                    'success': True,
+                    'error': None
+                }
+                
+                model_results['predictions'].append(prediction_result)
+                
+            except Exception as e:
+                process_logger.error(f"预测图片 {image_name} 失败: {str(e)}")
+                
+                # 存储错误结果
+                prediction_result = {
+                    'image_name': image_name,
+                    'image_path': image_path,
+                    'mask_path': None,
+                    'metrics': None,
+                    'success': False,
+                    'error': str(e)
+                }
+                
+                model_results['predictions'].append(prediction_result)
+        
+        # 计算模型统计信息
+        successful_predictions = [p for p in model_results['predictions'] if p['success']]
+        
+        if successful_predictions:
+            watermark_ratios = [p['metrics']['watermark_ratio'] for p in successful_predictions]
+            model_stats = {
+                'total_predictions': len(model_results['predictions']),
+                'successful_predictions': len(successful_predictions),
+                'failed_predictions': len(model_results['predictions']) - len(successful_predictions),
+                'avg_watermark_ratio': float(np.mean(watermark_ratios)),
+                'std_watermark_ratio': float(np.std(watermark_ratios)),
+                'min_watermark_ratio': float(np.min(watermark_ratios)),
+                'max_watermark_ratio': float(np.max(watermark_ratios)),
+                'detection_rate': float(np.mean([1 if ratio > 0.001 else 0 for ratio in watermark_ratios]))
+            }
+        else:
+            model_stats = {
+                'total_predictions': len(model_results['predictions']),
+                'successful_predictions': 0,
+                'failed_predictions': len(model_results['predictions']),
+                'avg_watermark_ratio': 0.0,
+                'std_watermark_ratio': 0.0,
+                'min_watermark_ratio': 0.0,
+                'max_watermark_ratio': 0.0,
+                'detection_rate': 0.0
+            }
+        
+        model_results['statistics'] = model_stats
+        
+        process_logger.info(f"模型 {model_name} 评估完成:")
+        process_logger.info(f"  成功预测: {model_stats['successful_predictions']}/{model_stats['total_predictions']}")
+        process_logger.info(f"  平均水印比例: {model_stats['avg_watermark_ratio']:.6f}")
+        process_logger.info(f"  检测率: {model_stats['detection_rate']:.2%}")
+        
+        return model_name, model_results
+        
+    except Exception as e:
+        process_logger.error(f"加载模型 {model_name} 失败: {str(e)}")
+        
+        # 返回模型加载失败的结果
+        return model_name, {
+            'model_path': model_path,
+            'model_name': model_name,
+            'model_info': None,
+            'predictions': [],
+            'statistics': None,
+            'load_error': str(e)
+        }
+
+def calculate_watermark_metrics(mask, image_shape):
+    """计算水印相关指标（独立函数，用于多进程）"""
+    total_pixels = image_shape[0] * image_shape[1]
+    watermark_pixels = np.sum(mask > 0)
+    watermark_ratio = watermark_pixels / total_pixels
+    
+    # 计算水印区域的连通性
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask.astype(np.uint8))
+    num_components = num_labels - 1  # 减去背景
+    
+    # 计算最大连通区域的面积
+    if num_components > 0:
+        component_areas = stats[1:, cv2.CC_STAT_AREA]  # 排除背景
+        max_component_area = np.max(component_areas)
+        max_component_ratio = max_component_area / total_pixels
+    else:
+        max_component_area = 0
+        max_component_ratio = 0
+    
+    return {
+        'watermark_ratio': float(watermark_ratio),
+        'watermark_pixels': int(watermark_pixels),
+        'total_pixels': int(total_pixels),
+        'num_components': int(num_components),
+        'max_component_area': int(max_component_area),
+        'max_component_ratio': float(max_component_ratio)
+    }
 
 class ModelSelector:
     """模型选择器类"""
@@ -58,6 +217,9 @@ class ModelSelector:
         
         # 获取模型列表
         self.model_paths = self._get_model_paths()
+        
+        # 预选择图片（避免在多进程中重复选择）
+        self.selected_images = None
         
         logger.info(f"找到 {len(self.image_paths)} 张图片")
         logger.info(f"找到 {len(self.model_paths)} 个模型")
@@ -132,11 +294,117 @@ class ModelSelector:
         }
     
     def run_evaluation(self):
-        """运行模型评估"""
+        """运行模型评估（并行版本）"""
         # 随机选择图片
         selected_images = self._select_random_images()
         
+        logger.info(f"开始并行评估 {len(self.model_paths)} 个模型")
+        logger.info(f"选择了 {len(selected_images)} 张图片进行测试")
+        
+        # 确定进程数（不超过模型数量和CPU核心数）
+        num_processes = min(len(self.model_paths), cpu_count(), 4)  # 限制最大进程数为4
+        logger.info(f"使用 {num_processes} 个进程进行并行处理")
+        
+        # 准备参数列表
+        args_list = []
+        for model_path in self.model_paths:
+            args = (model_path, selected_images, self.config_path, self.device, self.output_dir)
+            args_list.append(args)
+        
         # 存储所有结果
+        all_results = {
+            'timestamp': datetime.now().isoformat(),
+            'input_dir': self.input_dir,
+            'model_dir': self.model_dir,
+            'num_samples': len(selected_images),
+            'selected_images': [os.path.basename(img) for img in selected_images],
+            'models': {},
+            'summary': {}
+        }
+        
+        # 使用多进程池进行并行处理
+        start_time = time.time()
+        
+        try:
+            with Pool(processes=num_processes) as pool:
+                # 提交所有任务
+                logger.info("提交所有模型评估任务...")
+                
+                # 使用 map 进行并行处理
+                results = pool.map(evaluate_single_model, args_list)
+                
+                # 收集结果
+                for model_name, model_results in results:
+                    all_results['models'][model_name] = model_results
+                    
+                    if 'load_error' in model_results:
+                        logger.error(f"模型 {model_name} 加载失败: {model_results['load_error']}")
+                    elif model_results['statistics']:
+                        stats = model_results['statistics']
+                        logger.info(f"模型 {model_name} 评估完成:")
+                        logger.info(f"  成功预测: {stats['successful_predictions']}/{stats['total_predictions']}")
+                        logger.info(f"  平均水印比例: {stats['avg_watermark_ratio']:.6f}")
+                        logger.info(f"  检测率: {stats['detection_rate']:.2%}")
+        
+        except Exception as e:
+            logger.error(f"并行处理过程中发生错误: {str(e)}")
+            # 如果并行处理失败，回退到串行处理
+            logger.info("回退到串行处理模式...")
+            all_results = self._run_evaluation_serial(selected_images)
+        
+        end_time = time.time()
+        total_time = end_time - start_time
+        logger.info(f"\n所有模型评估完成，总耗时: {total_time:.2f} 秒")
+        
+        # 生成总体统计
+        successful_models = [name for name, result in all_results['models'].items() 
+                           if 'load_error' not in result and result['statistics'] is not None]
+        
+        if successful_models:
+            # 找出检测率最高的模型
+            best_model = max(successful_models, 
+                           key=lambda name: all_results['models'][name]['statistics']['detection_rate'])
+            
+            # 找出平均水印比例最高的模型
+            highest_ratio_model = max(successful_models,
+                                    key=lambda name: all_results['models'][name]['statistics']['avg_watermark_ratio'])
+            
+            all_results['summary'] = {
+                'total_models': len(self.model_paths),
+                'successful_models': len(successful_models),
+                'failed_models': len(self.model_paths) - len(successful_models),
+                'best_detection_model': {
+                    'name': best_model,
+                    'detection_rate': all_results['models'][best_model]['statistics']['detection_rate']
+                },
+                'highest_ratio_model': {
+                    'name': highest_ratio_model,
+                    'avg_ratio': all_results['models'][highest_ratio_model]['statistics']['avg_watermark_ratio']
+                }
+            }
+        else:
+            all_results['summary'] = {
+                'total_models': len(self.model_paths),
+                'successful_models': 0,
+                'failed_models': len(self.model_paths),
+                'best_detection_model': None,
+                'highest_ratio_model': None
+            }
+        
+        # 保存结果到JSON文件
+        results_file = os.path.join(self.output_dir, 'model_evaluation_results.json')
+        with open(results_file, 'w', encoding='utf-8') as f:
+            json.dump(all_results, f, indent=2, ensure_ascii=False)
+        
+        logger.info(f"\n评估结果已保存到: {results_file}")
+        
+        # 打印总结
+        self._print_summary(all_results)
+        
+        return all_results
+    
+    def _run_evaluation_serial(self, selected_images):
+        """串行评估模式（备用方案）"""
         all_results = {
             'timestamp': datetime.now().isoformat(),
             'input_dir': self.input_dir,
@@ -183,7 +451,7 @@ class ModelSelector:
                         image = cv2.imread(image_path)
                         
                         # 计算水印指标
-                        metrics = self._calculate_watermark_metrics(mask, image.shape[:2])
+                        metrics = calculate_watermark_metrics(mask, image.shape[:2])
                         
                         # 保存掩码图片
                         mask_filename = f"{Path(image_name).stem}_{model_name.replace('.pth', '')}_mask.png"
@@ -265,51 +533,6 @@ class ModelSelector:
                     'load_error': str(e)
                 }
         
-        # 生成总体统计
-        successful_models = [name for name, result in all_results['models'].items() 
-                           if 'load_error' not in result and result['statistics'] is not None]
-        
-        if successful_models:
-            # 找出检测率最高的模型
-            best_model = max(successful_models, 
-                           key=lambda name: all_results['models'][name]['statistics']['detection_rate'])
-            
-            # 找出平均水印比例最高的模型
-            highest_ratio_model = max(successful_models,
-                                    key=lambda name: all_results['models'][name]['statistics']['avg_watermark_ratio'])
-            
-            all_results['summary'] = {
-                'total_models': len(self.model_paths),
-                'successful_models': len(successful_models),
-                'failed_models': len(self.model_paths) - len(successful_models),
-                'best_detection_model': {
-                    'name': best_model,
-                    'detection_rate': all_results['models'][best_model]['statistics']['detection_rate']
-                },
-                'highest_ratio_model': {
-                    'name': highest_ratio_model,
-                    'avg_ratio': all_results['models'][highest_ratio_model]['statistics']['avg_watermark_ratio']
-                }
-            }
-        else:
-            all_results['summary'] = {
-                'total_models': len(self.model_paths),
-                'successful_models': 0,
-                'failed_models': len(self.model_paths),
-                'best_detection_model': None,
-                'highest_ratio_model': None
-            }
-        
-        # 保存结果到JSON文件
-        results_file = os.path.join(self.output_dir, 'model_evaluation_results.json')
-        with open(results_file, 'w', encoding='utf-8') as f:
-            json.dump(all_results, f, indent=2, ensure_ascii=False)
-        
-        logger.info(f"\n评估结果已保存到: {results_file}")
-        
-        # 打印总结
-        self._print_summary(all_results)
-        
         return all_results
     
     def _print_summary(self, results):
@@ -357,8 +580,8 @@ def main():
                        help='模型目录或文件路径')
     parser.add_argument('--output', type=str, required=True,
                        help='输出目录')
-    parser.add_argument('--num-samples', type=int, default=10,
-                       help='随机选择的图片数量 (默认: 10)')
+    parser.add_argument('--num-samples', type=int, default=100,
+                       help='随机选择的图片数量 (默认: 100)')
     parser.add_argument('--config', type=str,
                        help='配置文件路径')
     parser.add_argument('--device', type=str, default='cpu',
