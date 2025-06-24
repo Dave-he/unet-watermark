@@ -555,7 +555,7 @@ class WatermarkPredictor:
                 processor = PaddleOCRProcessor()
                 
                 # 生成文字掩码
-                text_mask = processor.create_mask_image(image_path)
+                text_mask = processor.create_mask_image(image_path, ocr_result=None)
                 
             elif ocr_engine == 'easy':
                 from ocr.easy_ocr import TextMaskGenerator
@@ -887,7 +887,7 @@ class WatermarkPredictor:
                 # 准备当前遍的iopaint命令
                 cmd = [
                     'iopaint', 'run',
-                    '--model', "lama" if i == 0 else model_name,
+                    '--model', "lama" if i <= 1 else model_name,
                     '--device', self.device.type,
                     '--image', current_input_dir,
                     '--mask', mask_dir,

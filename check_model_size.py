@@ -8,7 +8,7 @@ import torch
 
 # 加载配置
 cfg = get_cfg_defaults()
-cfg.merge_from_file('./src/configs/unet_watermark.yaml')
+cfg.merge_from_file('./src/configs/unet_watermark_large.yaml')
 
 # 创建模型
 model = create_model_from_config(cfg)
