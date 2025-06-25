@@ -2,6 +2,12 @@
 
 
 ```bash
+zip -r -s 100m image.zip data/
+cat image.z* > full.zip
+unzip full.zip
+
+
+
 #查到一些没用的图
 cd data/train
 find . -type f -name 'n*_*.jpg'
