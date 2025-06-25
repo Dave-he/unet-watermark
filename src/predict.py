@@ -31,7 +31,6 @@ try:
     IOPAINT_AVAILABLE = True
 except ImportError:
     IOPAINT_AVAILABLE = False
-    logger.warning("IOPaint ModelManager不可用，将使用subprocess方式")
 
 # 导入自定义模块
 from configs.config import get_cfg_defaults, update_config
