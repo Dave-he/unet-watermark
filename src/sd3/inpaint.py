@@ -15,7 +15,7 @@ import cv2
 import random
 from typing import List, Tuple
 
-class WatermarkRemover:
+class SDWatermarkRemover:
     def __init__(self, model_name: str = "stabilityai/stable-diffusion-3-medium-diffusers", device: str = "auto"):
         """
         初始化水印去除器
@@ -447,7 +447,7 @@ def main():
     args = parser.parse_args()
     
     # 创建水印去除器
-    remover = WatermarkRemover(model_name=args.model, device=args.device)
+    remover = SDWatermarkRemover(model_name=args.model, device=args.device)
     
     # 批量处理
     remover.process_folder(

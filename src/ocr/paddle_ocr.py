@@ -255,6 +255,60 @@ class PaddleOCRProcessor:
             self.process_single_image(image_file)
         
         print("Batch processing completed!")
+    
+    def detect_text_regions(self, image_path, languages=None):
+        """
+        检测图片中的文字区域
+        
+        Args:
+            image_path: 输入图片路径
+            languages: 支持的语言列表（PaddleOCR暂不使用此参数）
+            
+        Returns:
+            list: 文字区域列表，每个元素包含bbox信息
+        """
+        # 发送OCR请求
+        ocr_result = self.ocr_request(image_path)
+        if not ocr_result:
+            return []
+        
+        text_regions = []
+        
+        # 从ocrResults中获取坐标数据
+        if 'ocrResults' in ocr_result and ocr_result['ocrResults']:
+            for ocr_res in ocr_result['ocrResults']:
+                pruned_result = ocr_res.get('prunedResult', {})
+                
+                # 优先使用dt_polys（检测到的文字区域多边形）
+                polys_to_use = None
+                if 'dt_polys' in pruned_result and pruned_result['dt_polys']:
+                    polys_to_use = pruned_result['dt_polys']
+                elif 'rec_polys' in pruned_result and pruned_result['rec_polys']:
+                    polys_to_use = pruned_result['rec_polys']
+                elif 'rec_boxes' in pruned_result and pruned_result['rec_boxes']:
+                    # 如果只有矩形框，转换为多边形
+                    polys_to_use = []
+                    for box in pruned_result['rec_boxes']:
+                        # box格式: [x1, y1, x2, y2]
+                        x1, y1, x2, y2 = box
+                        poly = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
+                        polys_to_use.append(poly)
+                
+                if polys_to_use:
+                    for poly in polys_to_use:
+                        # 将多边形坐标转换为统一格式 [x1, y1, x2, y2, x3, y3, x4, y4]
+                        flat_bbox = [coord for point in poly for coord in point]
+                        text_regions.append({
+                            'bbox': flat_bbox,
+                            'text': '',  # PaddleOCR结果中可能没有文本内容
+                            'confidence': 1.0
+                        })
+        
+        return text_regions
+
+
+# 为了保持接口一致性，创建别名
+PaddleOCRDetector = PaddleOCRProcessor
 
 
 

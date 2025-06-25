@@ -217,30 +217,34 @@ class AutoTrainingLoop:
                 device=self.config.get('device', 'cpu')
             )
             
-            # 获取测试图片列表（限制数量以节省时间）
-            test_images = []
-            for ext in ['*.png', '*.jpg', '*.jpeg']:
-                test_images.extend(glob.glob(os.path.join(self.test_data_dir, ext)))
-            
-            # 限制处理图片数量
+            # 获取限制处理图片数量
             limit = self.config.get('prediction_limit', 100)
-            if len(test_images) > limit:
-                test_images = random.sample(test_images, limit)
             
-            # 执行预测 - 使用正确的方法名
-            results = predictor.process_folder_iterative(
+            # 执行预测 - 使用新的批量处理方法
+            results = predictor.process_folder_batch(
                 input_folder=self.test_data_dir,
                 output_folder=prediction_dir,
-                max_iterations=3,
-                watermark_threshold=0.1,
-                limit=limit,
-                use_ocr=False,
+                watermark_model='lama',  # 默认使用lama模型
+                text_model='lama',
+                use_ocr=False,  # 自动训练时通常不需要OCR
                 ocr_languages=['en', 'ch_sim'],
-                ocr_engine='easy'
+                ocr_engine='easy',
+                timeout=300,
+                save_intermediate=True,
+                merge_masks=False,  # 自动训练时不需要合并mask
+                limit=limit  # 传递limit参数
             )
             
-            logger.info(f"预测完成，处理了 {len(test_images)} 张图片")
-            return True, prediction_dir
+            # 检查预测结果
+            if results['status'] == 'success':
+                successful_count = results.get('successful_images', 0)
+                total_count = results.get('total_images', 0)
+                success_rate = results.get('success_rate', 0)
+                logger.info(f"预测完成，总共 {total_count} 张图片，成功 {successful_count} 张，成功率 {success_rate:.1f}%")
+                return True, prediction_dir
+            else:
+                logger.error(f"预测失败: {results.get('message', '未知错误')}")
+                return False, None
             
         except Exception as e:
             logger.error(f"预测失败: {e}")
@@ -556,6 +560,8 @@ def auto_main():
                        help='视频帧率')
     parser.add_argument('--video-duration', type=float, default=2.0,
                        help='每张图片在视频中的展示时长（秒）')
+    parser.add_argument('--prediction-limit', type=int, default=100,
+                       help='预测时限制处理的图片数量，随机选择n张图片进行处理')
     
     args = parser.parse_args()
     
@@ -577,7 +583,7 @@ def auto_main():
         'video_duration_per_image': getattr(args, 'video_duration', 2.0),
         'train_config': 'src/configs/unet_watermark.yaml',
         'model_selection_samples': 1000,
-        'prediction_limit': 100,
+        'prediction_limit': getattr(args, 'prediction_limit', 100),
         'transparent_ratio': 0.6,
         'logos_dir': 'data/WatermarkDataset/logos'
     }

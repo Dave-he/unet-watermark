@@ -8,7 +8,7 @@ import random
 import os
 from tqdm import tqdm
 
-class TextMaskGenerator:
+class EasyOCRDetector:
     """
     文字区域mask生成器类
     使用EasyOCR检测图片中的文字区域并生成二值化mask图
@@ -93,6 +93,44 @@ class TextMaskGenerator:
             self._visualize_results(img_rgb, mask, binary_mask)
         
         return binary_mask
+    
+    def detect_text_regions(self, image_path, languages=None):
+        """
+        检测图片中的文字区域
+        
+        Args:
+            image_path: 输入图片路径
+            languages: 支持的语言列表，None表示使用默认语言
+            
+        Returns:
+            list: 文字区域列表，每个元素包含bbox信息
+        """
+        # 读取图片
+        img = cv2.imread(str(image_path))
+        if img is None:
+            return []
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        
+        # 初始化读取器
+        self._init_reader()
+        
+        # 检测文字区域
+        results = self.reader.readtext(img)
+        
+        # 转换为统一格式
+        text_regions = []
+        for bbox, text, conf in results:
+            # 将bbox转换为统一格式 [x1, y1, x2, y2, x3, y3, x4, y4]
+            if len(bbox) == 4 and len(bbox[0]) == 2:
+                # bbox是四个点的坐标
+                flat_bbox = [coord for point in bbox for coord in point]
+                text_regions.append({
+                    'bbox': flat_bbox,
+                    'text': text,
+                    'confidence': conf
+                })
+        
+        return text_regions
     
     def _visualize_results(self, img_rgb, mask, binary_mask):
         """可视化处理结果"""

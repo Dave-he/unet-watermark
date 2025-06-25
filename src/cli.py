@@ -158,13 +158,12 @@ def repair_command(args):
         return
     
     print(f"输入文件夹: {args.input}")
-    print(f"输出文件夹: {args.output}")
+    print(f"输出文件夹: {args.output}")    
     print(f"模型路径: {args.model}")
-    print(f"最大迭代次数: {args.max_iterations}")
-    print(f"水印阈值: {args.watermark_threshold}")
-    print(f"IOPaint模型: {args.iopaint_model}")
-    if hasattr(args, 'limit') and args.limit:
-        print(f"处理图片限制: {args.limit} 张")
+    print(f"水印修复模型: {args.iopaint_model}")
+    print(f"文字修复模型: {args.iopaint_model}")  # 使用相同模型
+    print(f"处理超时时间: 300秒")
+    # 新的批量处理模式不需要limit参数
     if getattr(args, 'use_ocr', False):
         print(f"启用OCR文字检测: 是 (语言: {', '.join(args.ocr_languages)})")
     if getattr(args, 'generate_video', False):
@@ -185,25 +184,41 @@ def repair_command(args):
             device=device
         )
         
-        # 执行文件夹迭代修复
-        results = predictor.process_folder_iterative(
+        # 执行文件夹批量修复（新的4步批量处理模式）
+        results = predictor.process_folder_batch(
             input_folder=args.input,
             output_folder=args.output,
-            max_iterations=args.max_iterations,
-            watermark_threshold=args.watermark_threshold,
-            iopaint_model=args.iopaint_model,
-            limit=getattr(args, 'limit', None),
+            watermark_model=args.iopaint_model,
+            text_model=args.iopaint_model,  # 使用相同的模型进行文字修复
             use_ocr=getattr(args, 'use_ocr', False),
             ocr_languages=getattr(args, 'ocr_languages', ['en', 'ch_sim']),
-            ocr_engine=getattr(args, 'ocr_engine', 'easy')
+            ocr_engine=getattr(args, 'ocr_engine', 'easy'),
+            timeout=getattr(args, 'timeout', 300),
+            save_intermediate=getattr(args, 'save_intermediate', True),
+            merge_masks=getattr(args, 'merge_masks', True),
+            limit=getattr(args, 'limit', None)
         )
         
         print("\n文件夹修复完成！")
-        print(f"总图片数: {results.get('total_images', 0)}")
-        print(f"成功处理: {results.get('successful', 0)}")
-        print(f"部分处理: {results.get('partial', 0)}")
-        print(f"成功率: {results.get('success_rate', 0):.1f}%")
-        print(f"平均迭代次数: {results.get('average_iterations', 0)}")
+        if results['status'] == 'success':
+            print(f"总图片数: {results.get('total_images', 0)}")
+            print(f"成功处理: {results.get('successful_images', 0)}")
+            print(f"成功率: {results.get('success_rate', 0):.1f}%")
+            print(f"总处理时间: {results.get('total_time', 0):.2f}秒")
+            
+            # 显示各步骤统计
+            if 'step1_watermark_mask' in results:
+                print(f"步骤1 - 水印mask预测: {results['step1_watermark_mask'].get('successful', 0)} 张成功")
+            if 'step2_watermark_repair' in results:
+                print(f"步骤2 - 水印修复: {results['step2_watermark_repair'].get('successful', 0)} 张成功")
+            if 'step3_text_mask' in results:
+                print(f"步骤3 - 文字mask提取: {results['step3_text_mask'].get('successful', 0)} 张成功")
+            if 'step4_text_repair' in results:
+                print(f"步骤4 - 文字修复: {results['step4_text_repair'].get('successful', 0)} 张成功")
+            if 'step5_merge_masks' in results:
+                print(f"步骤5 - mask合并: {results['step5_merge_masks'].get('successful', 0)} 张成功")
+        else:
+            print(f"批量处理失败: {results.get('message', '未知错误')}")
         
         # 保存结果摘要
         summary_path = os.path.join(args.output, 'repair_summary.json')
@@ -212,52 +227,11 @@ def repair_command(args):
         
         print(f"\n结果摘要已保存: {summary_path}")
         
-        # 检查是否需要使用Stable Diffusion进行额外修复
-        if getattr(args, 'use_sd', False):
-            print("\n开始使用Stable Diffusion进行额外修复...")
-            try:
-                from inpaint import WatermarkRemover
-                
-                # 创建SD修复后的输出目录
-                sd_output_dir = os.path.join(args.output, 'sd_inpaint')
-                os.makedirs(sd_output_dir, exist_ok=True)
-                
-                # 创建水印去除器
-                sd_remover = WatermarkRemover(
-                    model_name=getattr(args, 'sd_model', "stabilityai/stable-diffusion-3-medium-diffusers"),
-                    device=str(device)
-                )
-                
-                # 对修复后的图片进行SD处理
-                sd_remover.process_folder(
-                    input_folder=args.output,  # 使用之前修复的结果作为输入
-                    output_folder=sd_output_dir,
-                    prompt=getattr(args, 'sd_prompt', "clean image without watermarks, text, or logos, high quality, natural"),
-                    negative_prompt=getattr(args, 'sd_negative_prompt', "watermark, text, logo, signature, blurry, low quality, artifacts"),
-                    num_inference_steps=getattr(args, 'sd_steps', 25),
-                    guidance_scale=getattr(args, 'sd_guidance_scale', 6.0),
-                    strength=getattr(args, 'sd_strength', 0.6),
-                    max_mask_ratio=getattr(args, 'sd_max_mask_ratio', 0.25),
-                    min_area=getattr(args, 'sd_min_area', 200),
-                    max_area_ratio=getattr(args, 'sd_max_area_ratio', 0.08),
-                    auto_detect=True,
-                    limit=getattr(args, 'limit', None)
-                )
-                
-                print(f"\nStable Diffusion修复完成！结果保存在: {sd_output_dir}")
-                
-                # 更新视频生成的输入目录为SD修复后的目录
-                final_repair_dir = sd_output_dir
-                
-            except Exception as e:
-                print(f"Stable Diffusion修复失败: {str(e)}")
-                print("将使用原始修复结果生成视频")
-                final_repair_dir = args.output
-        else:
-            final_repair_dir = args.output
+      
+        final_repair_dir = args.output
         
         # 检查是否需要生成视频
-        if getattr(args, 'generate_video', False):
+        if getattr(args, 'gen_video', False):
             print("\n开始生成对比视频...")
             try:
                 from scripts.video_generator import VideoGenerator
@@ -420,20 +394,15 @@ def main():
                               default="src/configs/unet_watermark_large.yaml")
     repair_parser.add_argument('--device', type=str, 
                               default='auto', help='计算设备 (默认: auto)')
-    repair_parser.add_argument('--threshold', type=float, default=0.3, 
-                              help='二值化阈值 (默认: 0.3)')
-    repair_parser.add_argument('--max-iterations', type=int, default=10,
-                              help='最大迭代次数 (默认: 10)')
-    repair_parser.add_argument('--save-mask', default=True,
-                            help='保存预测掩码')
-    repair_parser.add_argument('--watermark-threshold', type=float, default=0.01,
-                              help='水印面积阈值，低于此值认为修复完成 (默认: 0.01)')
-    repair_parser.add_argument('--min-detection-threshold', type=float, default=0.001,
-                              help='最小检测阈值，低于此值认为模型未检测到水印 (默认: 0.001)')
     repair_parser.add_argument('--iopaint-model', type=str, default='lama',
                               help='IOPaint修复模型 (默认: lama)')
-    repair_parser.add_argument('--limit', type=int, default=10,
-                              help='随机选择的图片数量限制')
+    repair_parser.add_argument('--timeout', type=int, default=300,
+                              help='每步处理超时时间（秒） (默认: 300)')
+    repair_parser.add_argument('--save-intermediate', action='store_true', default=True,
+                              help='保存中间处理结果 (默认: True)')
+    repair_parser.add_argument('--merge-masks', action='store_true', default=True,
+                              help='合并水印和文字mask用于视频生成 (默认: True)')
+    repair_parser.add_argument('--limit', type=int, help='限制处理的图片数量，随机选择n张图片进行处理')
     
     # 添加OCR文字掩码处理参数
     repair_parser.add_argument('--use-ocr', action='store_true', default='true',
@@ -461,17 +430,13 @@ def main():
     repair_parser.add_argument('--sd-max-area-ratio', type=float, default=0.08, help='SD最大区域比例 (默认: 0.08)')
     
     # 添加视频生成参数
-    repair_parser.add_argument('--generate-video', action='store_true', help='修复完成后自动生成对比视频')
+    repair_parser.add_argument('--gen-video', action='store_true', help='修复完成后自动生成对比视频')
     repair_parser.add_argument('--video-width', type=int, default=1920, help='视频宽度 (默认: 1920)')
     repair_parser.add_argument('--video-height', type=int, default=1080, help='视频高度 (默认: 1080)')
     repair_parser.add_argument('--duration', type=float, default=2.0, help='每张图片展示时长(秒) (默认: 2.0)')
     repair_parser.add_argument('--fps', type=int, default=30, help='视频帧率 (默认: 30)')
     
-    # 处理模式选择
-    repair_parser.add_argument('--optimize', action='store_true', help='启用优化批处理模式')
-    repair_parser.add_argument('--folder-mode', action='store_true', help='启用文件夹迭代处理模式')
-    repair_parser.add_argument('--batch-size', type=int, default=10, help='批处理大小（优化模式）')
-    repair_parser.add_argument('--pause-interval', type=int, default=50, help='暂停清理间隔（优化模式）')
+    # 新的批量处理模式已内置，不需要额外的模式选择参数
     
     # 自动循环训练命令
     auto_train_parser = subparsers.add_parser('auto', help='自动循环训练')

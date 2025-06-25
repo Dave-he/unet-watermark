@@ -244,8 +244,8 @@ def train(cfg, resume_from=None, use_blurred_mask=False):
         batch_size=cfg.TRAIN.BATCH_SIZE, 
         shuffle=True, 
         num_workers=num_workers,
-        pin_memory=True if device.type == 'cuda' else False,
-        persistent_workers=True if num_workers > 0 else False,
+        pin_memory=device.type == 'cuda',
+        persistent_workers=num_workers > 0,
         prefetch_factor=2 if num_workers > 0 else 2
     )
     
@@ -254,7 +254,7 @@ def train(cfg, resume_from=None, use_blurred_mask=False):
         batch_size=cfg.TRAIN.BATCH_SIZE * 2,  # 验证时可以用更大的batch size
         shuffle=False, 
         num_workers=num_workers,
-        pin_memory=True if device.type == 'cuda' else False,
+        pin_memory=device.type == 'cuda',
         persistent_workers=True if num_workers > 0 else False,
         prefetch_factor=2 if num_workers > 0 else False
     )

@@ -1,7 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-预测模块
-提供水印检测和修复功能
+预测模块 - 批量分步处理版本
+提供4步水印检测和修复功能：
+1. 对文件夹内所有图片使用UNet模型预测水印mask区域
+2. 对文件夹内所有图片调用IOPaint修复水印区域
+3. 对文件夹内所有图片使用OCR提取文字mask区域
+4. 对文件夹内所有图片调用IOPaint修复文字区域
 """
 
 import os
@@ -19,6 +23,7 @@ import random
 import time
 import gc
 from typing import Tuple, Optional, Dict, Any, List
+import glob
 
 # 导入自定义模块
 from configs.config import get_cfg_defaults, update_config
@@ -30,11 +35,16 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 class WatermarkPredictor:
-    
-    """水印预测器类 - 简化版，仅支持文件夹修复模式"""
+    """
+    批量4步水印移除器
+    Step 1: 对所有图片使用UNet模型预测水印mask
+    Step 2: 对所有图片使用IOPaint修复水印区域
+    Step 3: 对所有图片使用OCR提取文字mask
+    Step 4: 对所有图片使用IOPaint修复文字区域
+    """
     
     def __init__(self, model_path, config_path=None, config=None, device='cpu'):
-        """初始化预测器"""
+        """初始化批量水印移除器"""
         self.device = torch.device(device)
         
         # 加载配置
@@ -45,138 +55,90 @@ class WatermarkPredictor:
             if config_path and os.path.exists(config_path):
                 update_config(self.cfg, config_path)
         
-        # 加载模型
-        self.model, self.model_info = self._load_model(model_path)
+        # 加载UNet模型
+        self.model, self.model_info = self._load_unet_model(model_path)
         
         # 数据变换
         self.transform = get_val_transform(self.cfg.DATA.IMG_SIZE)
         
-        # 多模型支持
-        self.current_model_path = model_path
-        self.available_models = self._find_available_models(model_path)
-        self.current_model_index = 0
-        
-        # 迭代级别的模型管理
-        self.iteration_model_index = 0
-        self.last_iteration_detected = True
-        
-        # 批处理优化相关
-        self.optimal_batch_size = None
-        self.max_batch_size = getattr(self.cfg.PREDICT, 'MAX_BATCH_SIZE', 128)
-        self.auto_batch_size = getattr(self.cfg.PREDICT, 'AUTO_BATCH_SIZE', True)
-        
-        logger.info(f"预测器初始化完成，使用设备: {self.device}")
-        logger.info(f"发现可用模型: {len(self.available_models)} 个")
-        logger.info(f"批处理配置: 自动调整={self.auto_batch_size}, 最大批次={self.max_batch_size}")
+        logger.info(f"批量水印移除器初始化完成，使用设备: {self.device}")
         self._print_model_info()
-        
-        # 如果是GPU设备，尝试找到最优批处理大小
-        if self.device.type == 'cuda' and self.auto_batch_size:
-            self._find_optimal_batch_size()
     
-    def _find_available_models(self, current_model_path):
-        """查找models目录下的所有可用模型"""
-        models_dir = os.path.dirname(current_model_path)
-        available_models = []
+    def _load_unet_model(self, model_path):
+        """加载UNet模型"""
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"模型文件不存在: {model_path}")
         
-        if os.path.exists(models_dir):
-            for filename in os.listdir(models_dir):
-                if filename.endswith('.pth'):
-                    model_path = os.path.join(models_dir, filename)
-                    available_models.append(model_path)
-        
-        # 确保当前模型在列表中且排在第一位
-        if current_model_path in available_models:
-            available_models.remove(current_model_path)
-        available_models.insert(0, current_model_path)
-        
-        return available_models
+        try:
+            # 创建模型
+            model = create_model_from_config(self.cfg).to(self.device)
+            
+            # 加载权重
+            checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
+            
+            if 'model_state_dict' in checkpoint:
+                model.load_state_dict(checkpoint['model_state_dict'])
+                logger.info(f"从检查点加载UNet模型: {model_path}")
+                model_info = {
+                    'epoch': checkpoint.get('epoch', 'Unknown'),
+                    'val_loss': checkpoint.get('val_loss', 'Unknown'),
+                    'val_metrics': checkpoint.get('val_metrics', {})
+                }
+            else:
+                model.load_state_dict(checkpoint)
+                logger.info(f"加载UNet模型权重: {model_path}")
+                model_info = {'epoch': 'Unknown', 'val_loss': 'Unknown'}
+            
+            model.eval()
+            return model, model_info
+            
+        except Exception as e:
+            if self.device.type == 'cuda':
+                torch.cuda.empty_cache()
+            raise e
     
-    def _find_optimal_batch_size(self):
-        """自动寻找最优批处理大小"""
-        logger.info("正在寻找最优批处理大小...")
+    def _print_model_info(self):
+        """打印模型信息"""
+        logger.info("=" * 50)
+        logger.info("UNet模型信息:")
+        logger.info(f"训练轮数: {self.model_info.get('epoch', 'Unknown')}")
+        logger.info(f"验证损失: {self.model_info.get('val_loss', 'Unknown')}")
         
-        # 创建测试数据
-        test_tensor = torch.randn(1, 3, self.cfg.DATA.IMG_SIZE, self.cfg.DATA.IMG_SIZE).to(self.device)
-        
-        # 从小到大测试批处理大小
-        for batch_size in [4, 32, 48, 64, 128]:
-            if batch_size > self.max_batch_size:
-                break
-                
-            try:
-                # 清理GPU内存
-                if self.device.type == 'cuda':
-                    torch.cuda.empty_cache()
-                    torch.cuda.synchronize()
-                
-                # 创建批次数据
-                batch_tensor = test_tensor.repeat(batch_size, 1, 1, 1)
-                
-                # 测试推理
-                with torch.no_grad():
-                    start_time = torch.cuda.Event(enable_timing=True)
-                    end_time = torch.cuda.Event(enable_timing=True)
-                    
-                    start_time.record()
-                    output = self.model(batch_tensor)
-                    end_time.record()
-                    
-                    torch.cuda.synchronize()
-                    elapsed_time = start_time.elapsed_time(end_time)
-                
-                # 检查GPU内存使用情况
-                memory_used = torch.cuda.memory_allocated() / 1024**3  # GB
-                memory_total = torch.cuda.get_device_properties(0).total_memory / 1024**3  # GB
-                memory_ratio = memory_used / memory_total
-                
-                logger.info(f"批次大小 {batch_size}: 时间={elapsed_time:.2f}ms, 内存使用={memory_ratio:.1%}")
-                
-                # 如果内存使用超过85%，停止增加批次大小
-                if memory_ratio > 0.85:
-                    logger.info(f"内存使用率过高，选择批次大小: {batch_size // 2 if batch_size > 2 else 2}")
-                    self.optimal_batch_size = max(2, batch_size // 2)
-                    break
-                
-                self.optimal_batch_size = batch_size
-                
-                # 清理测试数据
-                del batch_tensor, output
-                
-            except RuntimeError as e:
-                if "out of memory" in str(e):
-                    logger.info(f"批次大小 {batch_size} 超出内存限制，选择: {batch_size // 2 if batch_size > 2 else 2}")
-                    self.optimal_batch_size = max(2, batch_size // 2)
-                    break
-                else:
-                    raise e
-        
-        # 清理测试数据
-        del test_tensor
-        if self.device.type == 'cuda':
-            torch.cuda.empty_cache()
-        
-        if self.optimal_batch_size is None:
-            self.optimal_batch_size = 8  # 默认值
-        
-        logger.info(f"最优批处理大小: {self.optimal_batch_size}")
+        val_metrics = self.model_info.get('val_metrics', {})
+        if val_metrics:
+            logger.info(f"验证IoU: {val_metrics.get('iou', 'Unknown')}")
+            logger.info(f"验证F1: {val_metrics.get('f1', 'Unknown')}")
+        logger.info("=" * 50)
     
-    def _get_gpu_memory_info(self):
-        """获取GPU内存信息"""
-        if self.device.type != 'cuda':
-            return None
+    def _get_image_files(self, input_folder, limit=None):
+        """获取文件夹中的所有图像文件
         
-        memory_allocated = torch.cuda.memory_allocated() / 1024**3  # GB
-        memory_cached = torch.cuda.memory_reserved() / 1024**3  # GB
-        memory_total = torch.cuda.get_device_properties(0).total_memory / 1024**3  # GB
+        Args:
+            input_folder: 输入文件夹路径
+            limit: 限制处理的图片数量，如果为None则处理所有图片
         
-        return {
-            'allocated': memory_allocated,
-            'cached': memory_cached,
-            'total': memory_total,
-            'usage_ratio': memory_allocated / memory_total
-        }
-
+        Returns:
+            list: 图像文件路径列表
+        """
+        image_files = []
+        extensions = ['*.jpg', '*.jpeg', '*.png', '*.bmp', '*.tiff', '*.webp']
+        
+        for ext in extensions:
+            # 添加小写和大写扩展名
+            image_files.extend(glob.glob(os.path.join(input_folder, ext)))
+            image_files.extend(glob.glob(os.path.join(input_folder, ext.upper())))
+        
+        image_files = sorted(list(set(image_files)))  # 去重并排序
+        
+        # 如果指定了limit，随机选择指定数量的图片
+        if limit is not None and limit > 0 and len(image_files) > limit:
+            total_count = len(image_files)
+            random.shuffle(image_files)
+            image_files = image_files[:limit]
+            logger.info(f"随机选择了 {limit} 张图片进行处理（总共 {total_count} 张）")
+        
+        return image_files
+    
     def _optimize_mask(self, mask):
         """优化预测的mask，使其稍微大一些，保证连通性，抑制噪声"""
         if mask is None:
@@ -224,781 +186,745 @@ class WatermarkPredictor:
                     if stats[i, cv2.CC_STAT_AREA] > 200:  # 保留面积大于200的组件
                         mask[labels == i] = 255
         
-        # 轮廓检测和凸包处理以获得更完整的连通域
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        if contours:
-            # 创建新的mask
-            connected_mask = np.zeros_like(mask)
-            
-            for contour in contours:
-                area = cv2.contourArea(contour)
-                if area > 100:  # 最小面积阈值
-                    # 计算凸包以获得更完整的连通域
-                    hull = cv2.convexHull(contour)
-                    
-                    # 如果凸包面积与原轮廓面积比值合理，使用凸包
-                    hull_area = cv2.contourArea(hull)
-                    if hull_area > 0 and area / hull_area > 0.6:  # 凸性比例阈值
-                        cv2.fillPoly(connected_mask, [hull], 255)
-                    else:
-                        # 否则使用多边形近似
-                        epsilon = 0.015 * cv2.arcLength(contour, True)
-                        approx = cv2.approxPolyDP(contour, epsilon, True)
-                        cv2.fillPoly(connected_mask, [approx], 255)
-            
-            mask = connected_mask
-        
         # 最后的平滑处理
         mask = cv2.GaussianBlur(mask, (3, 3), 0.5)
         _, mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
         
         return mask
-
-    def select_model_for_iteration(self, iteration):
-        """为当前迭代选择最优模型"""
-        if iteration == 1 or not self.last_iteration_detected:
-            if iteration > 1 and not self.last_iteration_detected:
-                if self.iteration_model_index < len(self.available_models) - 1:
-                    self.iteration_model_index += 1
-                    logger.info(f"上次迭代未检测到水印，切换到模型 {self.iteration_model_index + 1}/{len(self.available_models)}")
-                else:
-                    logger.info("已尝试所有模型，保持当前模型")
-                    return False
-            
-            # 加载选定的模型
-            target_model_path = self.available_models[self.iteration_model_index]
-            if target_model_path != self.current_model_path:
-                logger.info(f"为第 {iteration} 轮迭代加载模型: {os.path.basename(target_model_path)}")
-                self.model, self.model_info = self._load_model(target_model_path)
-                self.current_model_path = target_model_path
-        
-        return True
     
-    def predict_mask_single_model(self, image_path):
-        """使用当前模型预测水印掩码"""
-        current_model_name = os.path.basename(self.current_model_path)
+    def step1_batch_predict_watermark_masks(self, input_folder, mask_output_folder, limit=None):
+        """步骤1: 批量预测所有图片的水印mask
         
-        # 预测掩码
-        mask = self.predict_mask(image_path)
+        Args:
+            input_folder: 输入文件夹路径
+            mask_output_folder: mask输出文件夹路径
+            limit: 限制处理的图片数量，如果为None则处理所有图片
+        """
+        logger.info("=" * 60)
+        logger.info("步骤1: 开始批量预测水印mask")
+        logger.info("=" * 60)
         
-        # 计算水印面积比例
-        image = cv2.imread(image_path)
-        total_pixels = image.shape[0] * image.shape[1]
-        watermark_pixels = np.sum(mask > 0)
-        watermark_ratio = watermark_pixels / total_pixels
+        # 创建mask输出目录
+        os.makedirs(mask_output_folder, exist_ok=True)
         
-        return mask, current_model_name, watermark_ratio
-    
-    def _load_model(self, model_path):
-        """加载模型"""
-        if not os.path.exists(model_path):
-            raise FileNotFoundError(f"模型文件不存在: {model_path}")
+        # 获取所有图像文件
+        image_files = self._get_image_files(input_folder, limit=limit)
+        if not image_files:
+            logger.warning(f"在 {input_folder} 中未找到图像文件")
+            return []
         
-        try:
-            # 清理之前的模型内存
-            if hasattr(self, 'model') and self.model is not None:
-                del self.model
-                if self.device.type == 'cuda':
-                    torch.cuda.empty_cache()
-            
-            # 创建模型
-            model = create_model_from_config(self.cfg).to(self.device)
-            
-            # 加载权重
-            checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
-            
-            if 'model_state_dict' in checkpoint:
-                model.load_state_dict(checkpoint['model_state_dict'])
-                logger.info(f"从检查点加载模型: {model_path}")
-                model_info = {
-                    'epoch': checkpoint.get('epoch', 'Unknown'),
-                    'val_loss': checkpoint.get('val_loss', 'Unknown'),
-                    'val_metrics': checkpoint.get('val_metrics', {}),
-                    'train_loss': checkpoint.get('train_loss', 'Unknown'),
-                    'train_metrics': checkpoint.get('train_metrics', {}),
-                    'best_val_loss': checkpoint.get('best_val_loss', 'Unknown'),
-                    'is_final': checkpoint.get('is_final', False)
-                }
-            else:
-                model.load_state_dict(checkpoint)
-                logger.info(f"加载模型权重: {model_path}")
-                model_info = {'epoch': 'Unknown', 'val_loss': 'Unknown'}
-            
-            # 清理checkpoint内存
-            del checkpoint
-            if self.device.type == 'cuda':
-                torch.cuda.empty_cache()
-            
-            model.eval()
-            return model, model_info
-            
-        except Exception as e:
-            if self.device.type == 'cuda':
-                torch.cuda.empty_cache()
-            raise e
-    
-    def _print_model_info(self):
-        """打印模型信息"""
-        logger.info("=" * 50)
-        logger.info("模型信息:")
-        logger.info(f"训练轮数: {self.model_info.get('epoch', 'Unknown')}")
-        logger.info(f"验证损失: {self.model_info.get('val_loss', 'Unknown')}")
-        logger.info(f"训练损失: {self.model_info.get('train_loss', 'Unknown')}")
+        logger.info(f"找到 {len(image_files)} 张图片")
         
-        val_metrics = self.model_info.get('val_metrics', {})
-        if val_metrics:
-            logger.info(f"验证IoU: {val_metrics.get('iou', 'Unknown')}")
-            logger.info(f"验证F1: {val_metrics.get('f1', 'Unknown')}")
+        processed_files = []
         
-        if self.model_info.get('is_final', False):
-            logger.info("模型类型: 最终模型")
-        elif self.model_info.get('best_val_loss') == self.model_info.get('val_loss'):
-            logger.info("模型类型: 最佳模型")
-        else:
-            logger.info("模型类型: 检查点模型")
-        logger.info("=" * 50)
-    
-    def predict_mask(self, image_path):
-        """预测单张图像的水印掩码"""
-        # 加载图像
-        image = cv2.imread(image_path)
-        if image is None:
-            raise ValueError(f"无法加载图像: {image_path}")
+        # 批量处理
+        progress_bar = tqdm(image_files, desc="预测水印mask", unit="张")
         
-        # 转换为RGB
-        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        
-        # 应用变换
-        if self.transform:
-            transformed = self.transform(image=image_rgb)
-            input_tensor = transformed['image'].unsqueeze(0).to(self.device)
-        else:
-            # 如果没有变换，手动处理
-            image_resized = cv2.resize(image_rgb, (self.cfg.DATA.IMG_SIZE, self.cfg.DATA.IMG_SIZE))
-            input_tensor = torch.from_numpy(image_resized.transpose(2, 0, 1)).float().unsqueeze(0).to(self.device)
-            input_tensor = input_tensor / 255.0
-        
-        # 模型推理
-        with torch.no_grad():
-            output = self.model(input_tensor)
-            
-            # 移动到CPU
-            if isinstance(output, dict):
-                mask = output['out'].cpu().numpy()[0, 0]
-            else:
-                mask = output.cpu().numpy()[0, 0]
-        
-        # 调整大小到原图尺寸
-        original_height, original_width = image.shape[:2]
-        mask_resized = cv2.resize(mask, (original_width, original_height))
-        
-        # 二值化
-        threshold = getattr(self.cfg.PREDICT, 'THRESHOLD', 0.5)
-        mask_binary = (mask_resized > threshold).astype(np.uint8) * 255
-        
-        # 后处理
-        mask_processed = self._post_process_mask(mask_binary)
-        
-        return mask_processed
-    
-    def predict_mask_batch(self, image_paths, batch_size=None):
-        """批量预测多张图像的水印掩码，提升GPU利用率"""
-        if batch_size is None:
-            # 优先使用自动找到的最优批处理大小
-            if self.optimal_batch_size is not None:
-                batch_size = self.optimal_batch_size
-            else:
-                batch_size = getattr(self.cfg.PREDICT, 'BATCH_SIZE', 8)
-        
-        # 记录开始时的GPU内存状态
-        if self.device.type == 'cuda':
-            initial_memory = self._get_gpu_memory_info()
-            logger.info(f"开始批量预测，初始GPU内存使用: {initial_memory['usage_ratio']:.1%}")
-        
-        results = []
-        total_images = len(image_paths)
-        
-        # 分批处理
-        for i in range(0, total_images, batch_size):
-            batch_paths = image_paths[i:i + batch_size]
-            batch_images = []
-            batch_original_sizes = []
-            valid_indices = []
-            
-            # 加载并预处理批次中的所有图像
-            for idx, image_path in enumerate(batch_paths):
-                try:
-                    image = cv2.imread(image_path)
-                    if image is None:
-                        logger.warning(f"无法加载图像: {image_path}")
-                        results.append(None)
-                        continue
-                    
-                    # 记录原始尺寸
-                    original_height, original_width = image.shape[:2]
-                    batch_original_sizes.append((original_height, original_width))
-                    
-                    # 转换为RGB
-                    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-                    
-                    # 应用变换
-                    if self.transform:
-                        transformed = self.transform(image=image_rgb)
-                        input_tensor = transformed['image']
-                    else:
-                        # 如果没有变换，手动处理
-                        image_resized = cv2.resize(image_rgb, (self.cfg.DATA.IMG_SIZE, self.cfg.DATA.IMG_SIZE))
-                        input_tensor = torch.from_numpy(image_resized.transpose(2, 0, 1)).float()
-                        input_tensor = input_tensor / 255.0
-                    
-                    batch_images.append(input_tensor)
-                    valid_indices.append(len(results))
-                    results.append(None)  # 占位符
-                    
-                except Exception as e:
-                    logger.error(f"预处理图像失败 {image_path}: {str(e)}")
-                    results.append(None)
-            
-            if not batch_images:
-                continue
-            
-            # 将批次数据堆叠成tensor
+        for image_path in progress_bar:
             try:
-                batch_tensor = torch.stack(batch_images).to(self.device)
-                
-                # 批量推理
-                with torch.no_grad():
-                    batch_output = self.model(batch_tensor)
-                    
-                    # 处理输出
-                    if isinstance(batch_output, dict):
-                        batch_masks = batch_output['out'].cpu().numpy()
-                    else:
-                        batch_masks = batch_output.cpu().numpy()
-                
-                # 后处理每个mask
-                threshold = getattr(self.cfg.PREDICT, 'THRESHOLD', 0.5)
-                
-                for j, (mask, (orig_h, orig_w)) in enumerate(zip(batch_masks, batch_original_sizes)):
-                    # 调整大小到原图尺寸
-                    mask_resized = cv2.resize(mask[0], (orig_w, orig_h))
-                    
-                    # 二值化
-                    mask_binary = (mask_resized > threshold).astype(np.uint8) * 255
-                    
-                    # 后处理
-                    mask_processed = self._post_process_mask(mask_binary)
-                    
-                    # 更新结果
-                    results[valid_indices[j]] = mask_processed
-                
-                # 清理GPU内存
-                del batch_tensor, batch_output
-                if self.device.type == 'cuda':
-                    torch.cuda.empty_cache()
-                    
-            except Exception as e:
-                logger.error(f"批量推理失败: {str(e)}")
-                # 回退到单张处理
-                for j, path in enumerate(batch_paths):
-                    if j < len(valid_indices):
-                        try:
-                            mask = self.predict_mask(path)
-                            results[valid_indices[j]] = mask
-                        except Exception as single_e:
-                            logger.error(f"单张处理也失败 {path}: {str(single_e)}")
-                            results[valid_indices[j]] = None
-        
-        # 记录结束时的GPU内存状态
-        if self.device.type == 'cuda':
-            final_memory = self._get_gpu_memory_info()
-            logger.info(f"批量预测完成，最终GPU内存使用: {final_memory['usage_ratio']:.1%}")
-            logger.info(f"批量预测效率: 使用批次大小 {batch_size} 处理 {len(image_paths)} 张图片")
-        
-        return results
-    
-    def _post_process_mask(self, mask):
-        """后处理掩码"""
-        # 形态学操作
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-        
-        # 移除小的连通组件
-        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
-        
-        # 计算最小面积阈值
-        total_area = mask.shape[0] * mask.shape[1]
-        min_area = total_area * 0.001  # 0.1%的面积阈值
-        
-        # 创建新的掩码
-        new_mask = np.zeros_like(mask)
-        for i in range(1, num_labels):  # 跳过背景标签0
-            if stats[i, cv2.CC_STAT_AREA] >= min_area:
-                new_mask[labels == i] = 255
-        
-        return new_mask
-    
-    def _generate_text_mask(self, image_path, ocr_languages=None, ocr_engine='easy'):
-        """生成文字区域掩码"""
-        try:
-            # 设置默认语言
-            if ocr_languages is None:
-                ocr_languages = ['en', 'ch_sim']
-            
-            # 根据选择的OCR引擎导入相应模块
-            if ocr_engine == 'paddle':
-                from ocr.paddle_ocr import PaddleOCRProcessor
-                
-                # 创建PaddleOCR处理器
-                processor = PaddleOCRProcessor()
-                
-                # 生成文字掩码
-                text_mask = processor.create_mask_image(image_path, ocr_result=None)
-                
-            elif ocr_engine == 'easy':
-                from ocr.easy_ocr import TextMaskGenerator
-                
-                # 创建EasyOCR文字掩码生成器
-                generator = TextMaskGenerator(languages=ocr_languages, verbose=False)
-                
-                # 生成文字掩码
-                text_mask = generator.generate_text_mask(image_path, output_path=None, visualize=False)
-                
-            else:
-                logger.error(f"不支持的OCR引擎: {ocr_engine}")
-                return None
-            
-            return text_mask
-            
-        except ImportError as e:
-            logger.error(f"OCR模块导入失败: {str(e)}")
-            return None
-        except Exception as e:
-            logger.error(f"文字掩码生成失败: {str(e)}")
-            return None
-    
-    def process_folder_iterative(self, input_folder, output_folder, max_iterations=5,
-                            watermark_threshold=0.01, iopaint_model='lama', limit=None,
-                            use_ocr=False, ocr_languages=None, ocr_engine='easy'):
-        """文件夹迭代修复模式 - 核心功能"""
-        # 创建输出目录和临时工作目录
-        os.makedirs(output_folder, exist_ok=True)
-        # 确保data/tmp目录存在
-        tmp_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "tmp")
-        os.makedirs(tmp_root, exist_ok=True)
-        temp_dir = tempfile.mkdtemp(prefix="watermark_removal_", dir=tmp_root)
-        
-        try:
-            # 获取所有图片文件
-            image_files = []
-            for ext in ['*.jpg', '*.jpeg', '*.png', '*.bmp']:
-                image_files.extend(Path(input_folder).glob(ext))
-                image_files.extend(Path(input_folder).glob(ext.upper()))
-            
-            if not image_files:
-                logger.warning(f"在 {input_folder} 中未找到图像文件")
-                return {'status': 'error', 'message': '未找到图像文件'}
-            
-            # 如果设置了limit参数，随机选择指定数量的图片
-            if limit is not None and limit > 0 and len(image_files) > limit:
-                random.shuffle(image_files)
-                image_files = image_files[:limit]
-                logger.info(f"随机选择了 {len(image_files)} 张图片进行处理（总共 {len(list(Path(input_folder).glob('*')))} 张）")
-            
-            logger.info(f"开始处理 {len(image_files)} 张图片")
-            
-            # 初始化图片状态
-            image_status = {}
-            for img_path in image_files:
-                stem = img_path.stem
-                current_path = os.path.join(temp_dir, f"{stem}_current.png")
-                shutil.copy2(str(img_path), current_path)
-                
-                image_status[stem] = {
-                    'original_path': str(img_path),
-                    'current_path': current_path,
-                    'completed': False,
-                    'iterations': 0,
-                    'final_watermark_ratio': 0.0,
-                    'detection_model': None,
-                    'accumulated_mask': None  # 累积的mask
-                }
-            
-            # 开始迭代处理
-            for iteration in range(1, max_iterations + 1):
-                logger.info(f"开始第 {iteration}/{max_iterations} 轮处理")
-                
-                # 为当前迭代选择模型
-                if not self.select_model_for_iteration(iteration):
-                    logger.info("所有模型都已尝试，停止迭代")
-                    break
-                
-                # 第一阶段：批量掩码预测
-                masks_generated, iteration_detected = self._stage1_batch_mask_prediction(
-                    image_status, temp_dir, iteration, watermark_threshold, use_ocr, ocr_languages, ocr_engine
-                )
-                
-                # 更新迭代检测状态
-                self.last_iteration_detected = iteration_detected
-                
-                if not masks_generated:
-                    logger.info("所有图片都已完成处理")
-                    break
-                
-                # 第二阶段：批量修复
-                self._stage2_batch_repair(
-                    image_status, temp_dir, iteration, iopaint_model
-                )
-                
-                # 检查完成状态
-                completed_count = sum(1 for info in image_status.values() if info['completed'])
-                logger.info(f"第 {iteration} 轮完成，已完成: {completed_count}/{len(image_files)}")
-                
-                if completed_count == len(image_files):
-                    break
-            
-            # 复制最终结果到输出目录
-            self._copy_final_results(image_status, output_folder)
-            
-            # 生成统计结果
-            return self._generate_statistics(image_status, watermark_threshold)
-            
-        finally:
-            # 清理临时目录
-            shutil.rmtree(temp_dir, ignore_errors=True)
-    
-    def _stage1_batch_mask_prediction(self, image_status, temp_dir, iteration, watermark_threshold, use_ocr=False, ocr_languages=None, ocr_engine='easy'):
-        """第一阶段：批量掩码预测（优化版）"""
-        logger.info("第一阶段：批量掩码预测（使用批处理优化）")
-        
-        masks_generated = False
-        iteration_detected = False
-        
-        pending_images = [(name, info) for name, info in image_status.items() 
-                         if not info['completed']]
-        
-        if not pending_images:
-            return False, False
-        
-        current_model_name = os.path.basename(self.current_model_path)
-        logger.info(f"本轮迭代使用模型: {current_model_name}")
-        
-        # 准备批处理数据
-        image_paths = [info['current_path'] for name, info in pending_images]
-        image_names = [name for name, info in pending_images]
-        
-        # 获取批处理大小
-        if self.optimal_batch_size is not None:
-            batch_size = self.optimal_batch_size
-            logger.info(f"使用自动优化的批处理大小: {batch_size}")
-        else:
-            batch_size = getattr(self.cfg.PREDICT, 'BATCH_SIZE', 8)
-            logger.info(f"使用配置的批处理大小: {batch_size}")
-        
-        # 批量预测掩码
-        logger.info(f"开始批量预测 {len(image_paths)} 张图片...")
-        batch_masks = self.predict_mask_batch(image_paths, batch_size)
-        
-        # 处理批量预测结果
-        progress_bar = tqdm(zip(image_names, pending_images, batch_masks), 
-                           desc=f"处理结果(模型:{current_model_name[:15]})", 
-                           total=len(pending_images), unit="张")
-        
-        for image_name, (name, info), mask in progress_bar:
-            progress_bar.set_postfix({'当前': image_name[:15] + '...'})
-            
-            try:
-                if mask is None:
-                    logger.error(f"{image_name}: 掩码预测失败")
-                    info['completed'] = True
-                    info['iterations'] = iteration
+                # 加载图像
+                image = cv2.imread(image_path)
+                if image is None:
+                    logger.error(f"无法加载图像: {image_path}")
                     continue
                 
-                # 优化预测的mask
-                mask = self._optimize_mask(mask)
+                # 转换为RGB
+                image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
                 
-                # 如果启用OCR，生成文字掩码并合并
-                if use_ocr:
-                    try:
-                        text_mask = self._generate_text_mask(info['current_path'], ocr_languages, ocr_engine)
-                        if text_mask is not None:
-                            # 将文字掩码与水印掩码合并
-                            mask = cv2.bitwise_or(mask, text_mask)
-                            logger.info(f"{image_name}: 已合并文字掩码 (引擎: {ocr_engine.upper()}OCR)")
-                    except Exception as e:
-                        logger.warning(f"{image_name}: OCR处理失败: {str(e)}")
+                # 应用变换
+                if self.transform:
+                    transformed = self.transform(image=image_rgb)
+                    input_tensor = transformed['image'].unsqueeze(0).to(self.device)
+                else:
+                    # 手动处理
+                    image_resized = cv2.resize(image_rgb, (self.cfg.DATA.IMG_SIZE, self.cfg.DATA.IMG_SIZE))
+                    input_tensor = torch.from_numpy(image_resized.transpose(2, 0, 1)).float().unsqueeze(0).to(self.device)
+                    input_tensor = input_tensor / 255.0
+                
+                # 模型推理
+                with torch.no_grad():
+                    output = self.model(input_tensor)
+                    
+                    # 移动到CPU
+                    if isinstance(output, dict):
+                        mask = output['out'].cpu().numpy()[0, 0]
+                    else:
+                        mask = output.cpu().numpy()[0, 0]
+                
+                # 调整大小到原图尺寸
+                original_height, original_width = image.shape[:2]
+                mask_resized = cv2.resize(mask, (original_width, original_height))
+                
+                # 二值化
+                threshold = getattr(self.cfg.PREDICT, 'THRESHOLD', 0.5)
+                mask_binary = (mask_resized > threshold).astype(np.uint8) * 255
+                
+                # 后处理优化mask
+                mask_optimized = self._optimize_mask(mask_binary)
+                
+                # 保存mask
+                base_name = os.path.splitext(os.path.basename(image_path))[0]
+                mask_path = os.path.join(mask_output_folder, f"{base_name}_mask.png")
+                cv2.imwrite(mask_path, mask_optimized)
                 
                 # 计算水印面积比例
-                image = cv2.imread(info['current_path'])
-                total_pixels = image.shape[0] * image.shape[1]
-                watermark_pixels = np.sum(mask > 0)
+                total_pixels = original_height * original_width
+                watermark_pixels = np.sum(mask_optimized > 0)
                 watermark_ratio = watermark_pixels / total_pixels
                 
-                info['final_watermark_ratio'] = watermark_ratio
-                info['detection_model'] = current_model_name
+                processed_files.append({
+                    'image_path': image_path,
+                    'mask_path': mask_path,
+                    'watermark_ratio': watermark_ratio
+                })
                 
-                # 累积mask：将当前mask的白色区域与之前的mask合并
-                if info['accumulated_mask'] is None:
-                    # 第一次迭代，直接使用当前mask
-                    info['accumulated_mask'] = mask.copy()
-                else:
-                    # 合并当前mask和累积mask的白色区域
-                    info['accumulated_mask'] = cv2.bitwise_or(info['accumulated_mask'], mask)
-                
-                # 保存累积的最终mask
-                final_mask_path = os.path.join(temp_dir, f"{image_name}_final_mask.png")
-                cv2.imwrite(final_mask_path, info['accumulated_mask'])
-                info['final_mask_path'] = final_mask_path
-                
-                # 检查是否需要修复
-                if watermark_ratio < watermark_threshold:
-                    logger.info(f"{image_name}: 无需修复 (水印比例: {watermark_ratio:.6f})")
-                    info['completed'] = True
-                    info['iterations'] = iteration - 1
-                    continue
-                
-                # 检测到水印
-                iteration_detected = True
-                
-                # 保存当前迭代的掩码
-                mask_path = os.path.join(temp_dir, f"{image_name}_mask_iter{iteration}.png")
-                cv2.imwrite(mask_path, mask)
-                info['mask_path'] = mask_path
-                
-                logger.info(f"{image_name}: 检测到水印 {watermark_ratio:.6f} (模型: {current_model_name})")
-                masks_generated = True
+                progress_bar.set_postfix({'已处理': len(processed_files)})
                 
             except Exception as e:
-                logger.error(f"{image_name}: 掩码处理失败: {str(e)}")
-                info['completed'] = True
-                info['iterations'] = iteration
+                logger.error(f"处理图像失败 {image_path}: {str(e)}")
+                continue
         
-        logger.info(f"本轮迭代完成，模型 {current_model_name} 检测状态: {'检测到水印' if iteration_detected else '未检测到水印'}")
-        return masks_generated, iteration_detected
+        logger.info(f"步骤1完成: 成功处理 {len(processed_files)} 张图片")
+        return processed_files
     
-    def _stage2_batch_repair(self, image_status, temp_dir, iteration, iopaint_model):
-        """第二阶段：批量修复"""
-        logger.info("第二阶段：批量修复")
+    def _batch_iopaint_repair(self, processed_files, output_folder, mask_key, output_suffix, model_name='lama', timeout=300, skip_condition=None, skip_threshold=None):
+        """通用的IOPaint批量修复函数
         
-        # 收集需要修复的图片
-        repair_tasks = []
-        for image_name, info in image_status.items():
-            if not info['completed'] and 'mask_path' in info:
-                repair_tasks.append((image_name, info))
+        Args:
+            processed_files: 待处理的文件列表
+            output_folder: 输出文件夹
+            mask_key: mask路径在file_info中的键名
+            output_suffix: 输出文件后缀
+            model_name: IOPaint模型名称
+            timeout: 超时时间
+            skip_condition: 跳过条件的键名（如'watermark_ratio'或'text_pixels'）
+            skip_threshold: 跳过阈值
+        """
+        # 创建输出目录
+        os.makedirs(output_folder, exist_ok=True)
         
-        if not repair_tasks:
-            logger.info("没有需要修复的图片")
-            return
+        successful_files = []
         
-        logger.info(f"准备批量修复 {len(repair_tasks)} 张图片")
+        # 分离需要处理和跳过的文件
+        files_to_process = []
+        files_to_skip = []
         
-        # 创建批量处理的临时目录
-        batch_input_dir = os.path.join(temp_dir, f"batch_input_iter{iteration}")
-        batch_mask_dir = os.path.join(temp_dir, f"batch_mask_iter{iteration}")
-        batch_output_dir = os.path.join(temp_dir, f"batch_output_iter{iteration}")
-        
-        os.makedirs(batch_input_dir, exist_ok=True)
-        os.makedirs(batch_mask_dir, exist_ok=True)
-        os.makedirs(batch_output_dir, exist_ok=True)
-        
-        # 准备批量处理的文件
-        batch_mapping = {}
-        
-        for image_name, info in repair_tasks:
-            # 复制图片到批量输入目录
-            batch_image_name = f"{image_name}.png"
-            batch_image_path = os.path.join(batch_input_dir, batch_image_name)
-            shutil.copy2(info['current_path'], batch_image_path)
+        for file_info in processed_files:
+            should_skip = False
+            if skip_condition and skip_threshold is not None:
+                if skip_condition == 'watermark_ratio' and file_info.get('watermark_ratio', 1.0) < skip_threshold:
+                    should_skip = True
+                elif skip_condition == 'text_pixels' and file_info.get('text_pixels', 1) == 0:
+                    should_skip = True
             
-            # 复制mask到批量mask目录
-            batch_mask_path = os.path.join(batch_mask_dir, batch_image_name)
-            shutil.copy2(info['mask_path'], batch_mask_path)
+            if should_skip:
+                files_to_skip.append(file_info)
+            else:
+                files_to_process.append(file_info)
+        
+        # 处理跳过的文件：直接复制
+        for file_info in files_to_skip:
+            base_name = os.path.splitext(os.path.basename(file_info.get('original_path', file_info['image_path'])))[0]
+            output_path = os.path.join(output_folder, f"{base_name}_{output_suffix}.png")
+            shutil.copy2(file_info['image_path'], output_path)
             
-            batch_mapping[batch_image_name] = image_name
+            result_info = {
+                'image_path': output_path,
+                'original_path': file_info.get('original_path', file_info['image_path']),
+                'watermark_ratio': file_info.get('watermark_ratio', 0)
+            }
+            if 'text_pixels' in file_info:
+                result_info['text_pixels'] = file_info['text_pixels']
+            
+            successful_files.append(result_info)
+            
+            if skip_condition == 'watermark_ratio':
+                logger.info(f"水印面积过小({file_info.get('watermark_ratio', 0):.6f})，跳过修复: {base_name}")
+            elif skip_condition == 'text_pixels':
+                logger.info(f"无文字区域，跳过修复: {base_name}")
+        
+        # 如果没有需要处理的文件，直接返回
+        if not files_to_process:
+            logger.info(f"所有文件都被跳过，无需IOPaint处理")
+            return successful_files
+        
+        # 创建临时目录进行批量处理
+        temp_input_dir = None
+        temp_mask_dir = None
+        temp_output_dir = None
         
         try:
-            # 执行批量iopaint处理
-            success, message = self.batch_remove_watermark_with_iopaint(
-                batch_input_dir, batch_mask_dir, batch_output_dir, iopaint_model
-            )
+            # 创建临时目录
+            temp_input_dir = tempfile.mkdtemp(prefix='iopaint_input_')
+            temp_mask_dir = tempfile.mkdtemp(prefix='iopaint_mask_')
+            temp_output_dir = tempfile.mkdtemp(prefix='iopaint_output_')
             
-            if success:
-                # 处理批量修复结果
-                for batch_image_name, image_name in batch_mapping.items():
-                    batch_output_path = os.path.join(batch_output_dir, batch_image_name)
+            # 复制文件到临时目录
+            file_mapping = {}  # 用于映射临时文件名到原始信息
+            
+            for i, file_info in enumerate(files_to_process):
+                # 生成临时文件名
+                temp_name = f"img_{i:06d}.png"
+                
+                # 复制图像文件
+                temp_image_path = os.path.join(temp_input_dir, temp_name)
+                shutil.copy2(file_info['image_path'], temp_image_path)
+                
+                # 复制mask文件
+                temp_mask_path = os.path.join(temp_mask_dir, temp_name)
+                shutil.copy2(file_info[mask_key], temp_mask_path)
+                
+                # 记录映射关系
+                file_mapping[temp_name] = file_info
+            
+            logger.info(f"开始批量IOPaint处理 {len(files_to_process)} 个文件...")
+            
+            # 执行批量IOPaint命令
+            cmd = [
+                'iopaint', 'run',
+                '--model', model_name,
+                '--device', self.device.type,
+                '--image', temp_input_dir,
+                '--mask', temp_mask_dir,
+                '--output', temp_output_dir
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=timeout)
+            logger.info(f"IOPaint批量处理完成")
+            
+            # 处理输出文件
+            for temp_name, file_info in file_mapping.items():
+                temp_output_path = os.path.join(temp_output_dir, temp_name)
+                
+                if os.path.exists(temp_output_path):
+                    # 复制到最终输出目录
+                    base_name = os.path.splitext(os.path.basename(file_info.get('original_path', file_info['image_path'])))[0]
+                    final_output_path = os.path.join(output_folder, f"{base_name}_{output_suffix}.png")
+                    shutil.copy2(temp_output_path, final_output_path)
                     
-                    if os.path.exists(batch_output_path):
-                        # 更新图片状态
-                        new_current_path = os.path.join(temp_dir, f"{image_name}_iter{iteration}.png")
-                        shutil.copy2(batch_output_path, new_current_path)
-                        
-                        image_status[image_name]['current_path'] = new_current_path
-                        image_status[image_name]['iterations'] = iteration
-                        logger.info(f"{image_name}: 批量修复完成")
-                    else:
-                        logger.error(f"{image_name}: 批量修复输出文件不存在")
-                        image_status[image_name]['completed'] = True
-                        image_status[image_name]['iterations'] = iteration
-            else:
-                logger.error(f"批量修复失败: {message}")
-                # 标记所有任务为失败
-                for image_name, info in repair_tasks:
-                    info['completed'] = True
-                    info['iterations'] = iteration
+                    result_info = {
+                        'image_path': final_output_path,
+                        'original_path': file_info.get('original_path', file_info['image_path']),
+                        'watermark_ratio': file_info.get('watermark_ratio', 0)
+                    }
+                    if 'text_pixels' in file_info:
+                        result_info['text_pixels'] = file_info['text_pixels']
+                    
+                    successful_files.append(result_info)
+                else:
+                    # 如果IOPaint没有生成输出，复制原图作为fallback
+                    base_name = os.path.splitext(os.path.basename(file_info.get('original_path', file_info['image_path'])))[0]
+                    fallback_output_path = os.path.join(output_folder, f"{base_name}_{output_suffix}.png")
+                    shutil.copy2(file_info['image_path'], fallback_output_path)
+                    
+                    result_info = {
+                        'image_path': fallback_output_path,
+                        'original_path': file_info.get('original_path', file_info['image_path']),
+                        'watermark_ratio': file_info.get('watermark_ratio', 0)
+                    }
+                    if 'text_pixels' in file_info:
+                        result_info['text_pixels'] = file_info['text_pixels']
+                    
+                    successful_files.append(result_info)
+                    logger.error(f"IOPaint未生成输出文件，使用原图: {base_name}")
+        
+        except subprocess.TimeoutExpired:
+            logger.error(f"IOPaint批量处理超时，使用原图作为fallback")
+            # 超时时复制所有原图作为fallback
+            for file_info in files_to_process:
+                base_name = os.path.splitext(os.path.basename(file_info.get('original_path', file_info['image_path'])))[0]
+                fallback_output_path = os.path.join(output_folder, f"{base_name}_{output_suffix}.png")
+                shutil.copy2(file_info['image_path'], fallback_output_path)
+                
+                result_info = {
+                    'image_path': fallback_output_path,
+                    'original_path': file_info.get('original_path', file_info['image_path']),
+                    'watermark_ratio': file_info.get('watermark_ratio', 0)
+                }
+                if 'text_pixels' in file_info:
+                    result_info['text_pixels'] = file_info['text_pixels']
+                
+                successful_files.append(result_info)
+        
+        except subprocess.CalledProcessError as e:
+            error_msg = e.stderr if e.stderr else e.stdout if e.stdout else "未知错误"
+            logger.error(f"IOPaint批量处理错误: {error_msg}，使用原图作为fallback")
+            # 处理错误时复制所有原图作为fallback
+            for file_info in files_to_process:
+                base_name = os.path.splitext(os.path.basename(file_info.get('original_path', file_info['image_path'])))[0]
+                fallback_output_path = os.path.join(output_folder, f"{base_name}_{output_suffix}.png")
+                shutil.copy2(file_info['image_path'], fallback_output_path)
+                
+                result_info = {
+                    'image_path': fallback_output_path,
+                    'original_path': file_info.get('original_path', file_info['image_path']),
+                    'watermark_ratio': file_info.get('watermark_ratio', 0)
+                }
+                if 'text_pixels' in file_info:
+                    result_info['text_pixels'] = file_info['text_pixels']
+                
+                successful_files.append(result_info)
+        
+        except Exception as e:
+            logger.error(f"IOPaint批量处理异常: {str(e)}，使用原图作为fallback")
+            # 异常时复制所有原图作为fallback
+            for file_info in files_to_process:
+                base_name = os.path.splitext(os.path.basename(file_info.get('original_path', file_info['image_path'])))[0]
+                fallback_output_path = os.path.join(output_folder, f"{base_name}_{output_suffix}.png")
+                shutil.copy2(file_info['image_path'], fallback_output_path)
+                
+                result_info = {
+                    'image_path': fallback_output_path,
+                    'original_path': file_info.get('original_path', file_info['image_path']),
+                    'watermark_ratio': file_info.get('watermark_ratio', 0)
+                }
+                if 'text_pixels' in file_info:
+                    result_info['text_pixels'] = file_info['text_pixels']
+                
+                successful_files.append(result_info)
         
         finally:
-            # 清理批量处理临时目录和mask文件
-            for temp_dir_path in [batch_input_dir, batch_mask_dir, batch_output_dir]:
-                if os.path.exists(temp_dir_path):
-                    shutil.rmtree(temp_dir_path, ignore_errors=True)
-            
-            # 清理mask文件
-            for image_name, info in repair_tasks:
-                if 'mask_path' in info:
+            # 清理临时目录
+            for temp_dir in [temp_input_dir, temp_mask_dir, temp_output_dir]:
+                if temp_dir and os.path.exists(temp_dir):
                     try:
-                        os.remove(info['mask_path'])
-                    except:
-                        pass
-                    del info['mask_path']
+                        shutil.rmtree(temp_dir)
+                    except Exception as e:
+                        logger.warning(f"清理临时目录失败 {temp_dir}: {str(e)}")
+        
+        return successful_files
     
-    def batch_remove_watermark_with_iopaint(self, input_dir, mask_dir, output_dir, model_name='lama', timeout=600, repeat_time=3):
-        """使用iopaint批量去除水印，支持连续处理多遍"""
+    def step2_batch_iopaint_watermark_repair(self, processed_files, step2_output_folder, model_name='lama', timeout=300):
+        """步骤2: 批量修复所有图片的水印区域"""
+        logger.info("=" * 60)
+        logger.info("步骤2: 开始批量修复水印区域")
+        logger.info("=" * 60)
+        
+        successful_files = self._batch_iopaint_repair(
+            processed_files=processed_files,
+            output_folder=step2_output_folder,
+            mask_key='mask_path',
+            output_suffix='step2',
+            model_name=model_name,
+            timeout=timeout,
+            skip_condition='watermark_ratio',
+            skip_threshold=0.001
+        )
+        
+        logger.info(f"步骤2完成: 成功处理 {len(successful_files)} 张图片")
+        return successful_files
+    
+    def step3_batch_extract_text_masks(self, processed_files, text_mask_output_folder, ocr_languages=None, ocr_engine='easy'):
+        """步骤3: 批量提取所有图片的文字mask"""
+        logger.info("=" * 60)
+        logger.info("步骤3: 开始批量提取文字mask")
+        logger.info("=" * 60)
+        
+        # 创建文字mask输出目录
+        os.makedirs(text_mask_output_folder, exist_ok=True)
+        
         try:
-            # 创建临时目录用于中间结果
-            temp_dirs = []
-            current_input_dir = input_dir
-            
-            for i in range(repeat_time):
-                # 确定当前遍的输出目录
-                if i == repeat_time - 1:
-                    # 最后一遍，输出到目标目录
-                    current_output_dir = output_dir
-                else:
-                    # 中间遍，输出到临时目录
-                    # 确保data/tmp目录存在
-                    tmp_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "tmp")
-                    os.makedirs(tmp_root, exist_ok=True)
-                    temp_dir = tempfile.mkdtemp(prefix=f'iopaint_iter{i+1}_', dir=tmp_root)
-                    temp_dirs.append(temp_dir)
-                    current_output_dir = temp_dir
-                
-                # 准备当前遍的iopaint命令
-                cmd = [
-                    'iopaint', 'run',
-                    '--model', "lama" if i <= 1 else model_name,
-                    '--device', self.device.type,
-                    '--image', current_input_dir,
-                    '--mask', mask_dir,
-                    '--output', current_output_dir
-                ]
-                
-                # 运行当前遍的iopaint处理
-                logger.info(f"执行第{i+1}遍IOPaint处理: {' '.join(cmd)}")
-                result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=timeout)
-                
-                # 检查当前遍是否生成了文件
-                output_files = [f for f in os.listdir(current_output_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
-                if not output_files:
-                    # 清理临时目录
-                    for temp_dir in temp_dirs:
-                        if os.path.exists(temp_dir):
-                            shutil.rmtree(temp_dir)
-                    return False, f"第{i+1}遍IOPaint处理未生成任何输出文件"
-                
-                logger.info(f"第{i+1}遍IOPaint处理完成，生成 {len(output_files)} 个文件")
-                
-                # 下一遍的输入目录是当前遍的输出目录
-                current_input_dir = current_output_dir
-            
-            # 清理临时目录
-            for temp_dir in temp_dirs:
-                if os.path.exists(temp_dir):
-                    shutil.rmtree(temp_dir)
-            
-            # 检查最终输出目录
-            final_output_files = [f for f in os.listdir(output_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
-            logger.info(f"IOPaint连续{repeat_time}遍处理成功，最终生成 {len(final_output_files)} 个文件")
-            return True, f"连续{repeat_time}遍处理成功"
-            
-        except subprocess.TimeoutExpired:
-            # 清理临时目录
-            for temp_dir in temp_dirs:
-                if os.path.exists(temp_dir):
-                    shutil.rmtree(temp_dir)
-            return False, f"IOPaint处理超时（{timeout}秒）"
-        except subprocess.CalledProcessError as e:
-            # 清理临时目录
-            for temp_dir in temp_dirs:
-                if os.path.exists(temp_dir):
-                    shutil.rmtree(temp_dir)
-            error_msg = e.stderr if e.stderr else e.stdout if e.stdout else "未知错误"
-            return False, f"IOPaint处理错误: {error_msg}"
-        except Exception as e:
-            # 清理临时目录
-            for temp_dir in temp_dirs:
-                if os.path.exists(temp_dir):
-                    shutil.rmtree(temp_dir)
-            return False, f"批量处理错误: {str(e)}"
-    
-    def _copy_final_results(self, image_status, output_folder):
-        """复制最终结果到输出目录"""
-        logger.info("复制最终结果到输出目录")
+            if ocr_engine.lower() == 'paddle':
+                from ocr.paddle_ocr import PaddleOCRDetector
+                ocr_detector = PaddleOCRDetector()
+            else:
+                from ocr.easy_ocr import EasyOCRDetector
+                ocr_detector = EasyOCRDetector()
+        except ImportError as e:
+            logger.error(f"OCR模块导入错误: {str(e)}")
+            return []
         
-        # 创建mask子目录
-        mask_output_dir = os.path.join(output_folder, 'masks')
-        os.makedirs(mask_output_dir, exist_ok=True)
+        successful_files = []
         
-        for image_name, info in image_status.items():
+        progress_bar = tqdm(processed_files, desc="提取文字mask", unit="张")
+        
+        for file_info in progress_bar:
             try:
-                # 确定输出文件名
-                if info['completed'] and info['final_watermark_ratio'] < 0.1:
-                    output_filename = f"{image_name}_cleaned.png"
+                image_path = file_info['image_path']
+                
+                # 加载图像
+                image = cv2.imread(image_path)
+                if image is None:
+                    logger.error(f"无法加载图像: {image_path}")
+                    continue
+                
+                # OCR检测文字区域
+                if ocr_languages:
+                    text_regions = ocr_detector.detect_text_regions(image_path, languages=ocr_languages)
                 else:
-                    output_filename = f"{image_name}_partial.png"
+                    text_regions = ocr_detector.detect_text_regions(image_path)
                 
-                output_path = os.path.join(output_folder, output_filename)
-                shutil.copy2(info['current_path'], output_path)
+                # 创建文字mask
+                height, width = image.shape[:2]
+                text_mask = np.zeros((height, width), dtype=np.uint8)
                 
-                # 保存最终的mask图片（如果存在）
-                if 'final_mask_path' in info and os.path.exists(info['final_mask_path']):
-                    mask_filename = f"{image_name}_mask.png"
-                    mask_output_path = os.path.join(mask_output_dir, mask_filename)
-                    shutil.copy2(info['final_mask_path'], mask_output_path)
-                    logger.info(f"{image_name}: mask已保存到 {mask_filename}")
+                if text_regions:
+                    for region in text_regions:
+                        # 获取文字区域的边界框
+                        if 'bbox' in region:
+                            bbox = region['bbox']
+                            # 根据不同OCR引擎的bbox格式处理
+                            if len(bbox) == 4:  # [x, y, w, h]
+                                x, y, w, h = bbox
+                                cv2.rectangle(text_mask, (int(x), int(y)), (int(x+w), int(y+h)), 255, -1)
+                            elif len(bbox) == 8:  # [x1, y1, x2, y2, x3, y3, x4, y4]
+                                points = np.array(bbox).reshape((-1, 2)).astype(np.int32)
+                                cv2.fillPoly(text_mask, [points], 255)
                 
-                logger.info(f"{image_name}: 已保存到 {output_filename}")
+                # 对文字mask进行形态学处理
+                if np.sum(text_mask > 0) > 0:
+                    # 膨胀操作扩大文字区域
+                    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+                    text_mask = cv2.dilate(text_mask, kernel, iterations=2)
+                
+                # 保存文字mask
+                base_name = os.path.splitext(os.path.basename(file_info['original_path']))[0]
+                text_mask_path = os.path.join(text_mask_output_folder, f"{base_name}_text_mask.png")
+                cv2.imwrite(text_mask_path, text_mask)
+                
+                # 计算文字区域像素数
+                text_pixels = np.sum(text_mask > 0)
+                
+                successful_files.append({
+                    'image_path': image_path,
+                    'original_path': file_info['original_path'],
+                    'text_mask_path': text_mask_path,
+                    'text_pixels': text_pixels,
+                    'watermark_ratio': file_info['watermark_ratio']
+                })
+                
+                progress_bar.set_postfix({'已处理': len(successful_files)})
                 
             except Exception as e:
-                logger.error(f"{image_name}: 复制结果失败: {str(e)}")
+                logger.error(f"OCR处理错误: {file_info['image_path']} - {str(e)}")
+                continue
+        
+        logger.info(f"步骤3完成: 成功处理 {len(successful_files)} 张图片")
+        return successful_files
     
-    def _generate_statistics(self, image_status, watermark_threshold):
-        """生成处理统计信息"""
-        total_images = len(image_status)
-        successful = sum(1 for info in image_status.values() 
-                        if info['completed'] and info['final_watermark_ratio'] < watermark_threshold)
-        partial = total_images - successful
+    def step4_batch_iopaint_text_repair(self, processed_files, final_output_folder, model_name='lama', timeout=300):
+        """步骤4: 批量修复所有图片的文字区域"""
+        logger.info("=" * 60)
+        logger.info("步骤4: 开始批量修复文字区域")
+        logger.info("=" * 60)
         
-        avg_iterations = np.mean([info['iterations'] for info in image_status.values()])
+        successful_files = self._batch_iopaint_repair(
+            processed_files=processed_files,
+            output_folder=final_output_folder,
+            mask_key='text_mask_path',
+            output_suffix='final',
+            model_name=model_name,
+            timeout=timeout,
+            skip_condition='text_pixels',
+            skip_threshold=None
+        )
         
-        # 模型使用统计
-        model_usage = {}
-        for info in image_status.values():
-            if info['detection_model']:
-                model_usage[info['detection_model']] = model_usage.get(info['detection_model'], 0) + 1
+        # 转换输出格式以保持向后兼容
+        final_results = []
+        for file_info in successful_files:
+            final_results.append({
+                'original_path': file_info['original_path'],
+                'final_path': file_info['image_path'],
+                'watermark_ratio': file_info['watermark_ratio'],
+                'text_pixels': file_info.get('text_pixels', 0)
+            })
         
-        statistics = {
-            'status': 'completed',
-            'total_images': total_images,
-            'successful': successful,
-            'partial': partial,
-            'success_rate': successful / total_images * 100,
-            'average_iterations': round(avg_iterations, 2),
-            'model_usage': model_usage
-        }
+        logger.info(f"步骤4完成: 成功处理 {len(final_results)} 张图片")
+        return final_results
+     
+    def merge_masks_for_video(self, step1_results, step3_results, merged_mask_output_folder):
+         """
+         合并水印mask和文字mask，生成最终mask用于视频参考
+         
+         Args:
+             step1_results: 步骤1的结果（包含水印mask路径）
+             step3_results: 步骤3的结果（包含文字mask路径）
+             merged_mask_output_folder: 合并mask的输出文件夹
+             
+         Returns:
+             merged_files: 合并后的文件信息列表
+         """
+         logger.info("=" * 60)
+         logger.info("合并水印mask和文字mask")
+         logger.info("=" * 60)
+         
+         # 创建合并mask输出目录
+         os.makedirs(merged_mask_output_folder, exist_ok=True)
+         
+         # 创建文件映射字典，方便查找对应的文字mask
+         text_mask_dict = {}
+         if step3_results:
+             for file_info in step3_results:
+                 original_path = file_info['original_path']
+                 base_name = os.path.splitext(os.path.basename(original_path))[0]
+                 text_mask_dict[base_name] = file_info['text_mask_path']
+         
+         merged_files = []
+         
+         progress_bar = tqdm(step1_results, desc="合并mask", unit="张")
+         
+         for file_info in progress_bar:
+             try:
+                 image_path = file_info['image_path']
+                 watermark_mask_path = file_info['mask_path']
+                 
+                 base_name = os.path.splitext(os.path.basename(image_path))[0]
+                 merged_mask_path = os.path.join(merged_mask_output_folder, f"{base_name}.png")
+                 
+                 # 加载水印mask
+                 watermark_mask = cv2.imread(watermark_mask_path, cv2.IMREAD_GRAYSCALE)
+                 if watermark_mask is None:
+                     logger.error(f"无法加载水印mask: {watermark_mask_path}")
+                     continue
+                 
+                 # 初始化合并mask为水印mask
+                 merged_mask = watermark_mask.copy()
+                 
+                 # 查找对应的文字mask
+                 text_mask_path = text_mask_dict.get(base_name)
+                 if text_mask_path and os.path.exists(text_mask_path):
+                     # 加载文字mask
+                     text_mask = cv2.imread(text_mask_path, cv2.IMREAD_GRAYSCALE)
+                     if text_mask is not None:
+                         # 确保两个mask尺寸一致
+                         if text_mask.shape != watermark_mask.shape:
+                             text_mask = cv2.resize(text_mask, (watermark_mask.shape[1], watermark_mask.shape[0]))
+                         
+                         # 合并mask：使用逻辑或操作
+                         merged_mask = cv2.bitwise_or(watermark_mask, text_mask)
+                         
+                         logger.debug(f"合并了水印mask和文字mask: {base_name}")
+                     else:
+                         logger.warning(f"无法加载文字mask: {text_mask_path}")
+                 else:
+                     logger.debug(f"未找到对应的文字mask，仅使用水印mask: {base_name}")
+                 
+                 # 对合并后的mask进行优化
+                 merged_mask_optimized = self._optimize_mask(merged_mask)
+                 
+                 # 保存合并后的mask
+                 cv2.imwrite(merged_mask_path, merged_mask_optimized)
+                 
+                 # 计算合并mask的统计信息
+                 total_pixels = merged_mask_optimized.shape[0] * merged_mask_optimized.shape[1]
+                 mask_pixels = np.sum(merged_mask_optimized > 0)
+                 mask_ratio = mask_pixels / total_pixels
+                 
+                 merged_files.append({
+                     'original_path': image_path,
+                     'watermark_mask_path': watermark_mask_path,
+                     'text_mask_path': text_mask_path,
+                     'merged_mask_path': merged_mask_path,
+                     'mask_ratio': mask_ratio,
+                     'mask_pixels': mask_pixels
+                 })
+                 
+                 progress_bar.set_postfix({'已处理': len(merged_files)})
+                 
+             except Exception as e:
+                 logger.error(f"合并mask失败: {file_info['image_path']} - {str(e)}")
+                 continue
+         
+         logger.info(f"mask合并完成: 成功处理 {len(merged_files)} 张图片")
+         return merged_files
+     
+    def process_folder_batch(self, input_folder, output_folder,
+                            watermark_model='lama', text_model='lama',
+                            use_ocr=True, ocr_languages=None, ocr_engine='easy',
+                            timeout=300, save_intermediate=True, merge_masks=True, limit=None):
+        """
+        批量处理文件夹：分步骤对所有图片进行处理
         
-        logger.info(f"处理完成: {successful}/{total_images} 成功, 平均迭代 {avg_iterations:.2f} 次")
-        logger.info(f"模型使用统计: {model_usage}")
+        Args:
+            input_folder: 输入文件夹路径
+            output_folder: 输出文件夹路径
+            watermark_model: 水印修复模型
+            text_model: 文字修复模型
+            use_ocr: 是否使用OCR
+            ocr_languages: OCR语言列表
+            ocr_engine: OCR引擎
+            timeout: 每步超时时间
+            save_intermediate: 是否保存中间结果
+            merge_masks: 是否合并mask用于视频生成
+            limit: 限制处理的图片数量，如果为None则处理所有图片
+            
+        Returns:
+            statistics: 处理统计信息
+        """
+        logger.info("=" * 80)
+        logger.info(f"开始批量分步处理文件夹: {input_folder}")
+        logger.info("=" * 80)
         
-        return statistics
+        start_time = time.time()
+        
+        # 创建输出目录结构
+        os.makedirs(output_folder, exist_ok=True)
+        
+        if save_intermediate:
+            mask_folder = os.path.join(output_folder, 'step1_masks')
+            step2_folder = os.path.join(output_folder, 'step2_watermark_repaired')
+            text_mask_folder = os.path.join(output_folder, 'step3_text_masks')
+            final_folder = output_folder
+        else:
+            # 使用临时目录
+            temp_dir = tempfile.mkdtemp(prefix="batch_watermark_removal_")
+            mask_folder = os.path.join(temp_dir, 'masks')
+            step2_folder = os.path.join(temp_dir, 'step2')
+            text_mask_folder = os.path.join(temp_dir, 'text_masks')
+            final_folder = output_folder
+        
+        try:
+            # 步骤1: 批量预测水印mask
+            step1_results = self.step1_batch_predict_watermark_masks(input_folder, mask_folder, limit=limit)
+            if not step1_results:
+                return {'status': 'error', 'message': '步骤1失败：未找到图像文件或处理失败'}
+            
+            # 步骤2: 批量修复水印
+            step2_results = self.step2_batch_iopaint_watermark_repair(
+                step1_results, step2_folder, watermark_model, timeout
+            )
+            if not step2_results:
+                return {'status': 'error', 'message': '步骤2失败：水印修复失败'}
+            
+            # 步骤3和4: OCR和文字修复（如果启用）
+            if use_ocr:
+                step3_results = self.step3_batch_extract_text_masks(
+                    step2_results, text_mask_folder, ocr_languages, ocr_engine
+                )
+                if not step3_results:
+                    logger.warning("步骤3失败：OCR处理失败，跳过文字修复")
+                    # 直接复制步骤2的结果到最终输出
+                    for file_info in step2_results:
+                        base_name = os.path.splitext(os.path.basename(file_info['original_path']))[0]
+                        final_path = os.path.join(final_folder, f"{base_name}_final.png")
+                        shutil.copy2(file_info['image_path'], final_path)
+                    step4_results = step2_results
+                    step3_results = []  # 设置为空列表以便后续合并mask使用
+                else:
+                    step4_results = self.step4_batch_iopaint_text_repair(
+                        step3_results, final_folder, text_model, timeout
+                    )
+            else:
+                logger.info("跳过OCR和文字修复步骤")
+                # 直接复制步骤2的结果到最终输出
+                for file_info in step2_results:
+                    base_name = os.path.splitext(os.path.basename(file_info['original_path']))[0]
+                    final_path = os.path.join(final_folder, f"{base_name}_final.png")
+                    shutil.copy2(file_info['image_path'], final_path)
+                step4_results = step2_results
+                step3_results = []  # 设置为空列表以便后续合并mask使用
+            
+        # 步骤5: 合并水印mask和文字mask，生成最终mask用于视频参考
+            if merge_masks and step1_results:
+                merged_mask_folder = os.path.join(output_folder, "mask")
+                merged_results = self.merge_masks_for_video(
+                    step1_results, step3_results, merged_mask_folder
+                )
+            else:
+                merged_results = []
+            
+            # 计算统计信息
+            end_time = time.time()
+            processing_time = end_time - start_time
+            
+            total_images = len(step1_results)
+            successful_images = len(step4_results) if 'step4_results' in locals() else len(step2_results)
+            
+            # 计算平均水印面积比例
+            avg_watermark_ratio = 0.0
+            avg_text_pixels = 0.0
+            if step1_results:
+                avg_watermark_ratio = sum(f['watermark_ratio'] for f in step1_results) / len(step1_results)
+            if use_ocr and 'step3_results' in locals() and step3_results:
+                avg_text_pixels = sum(f['text_pixels'] for f in step3_results) / len(step3_results)
+            
+            statistics = {
+                'status': 'success',
+                'total_images': total_images,
+                'successful_images': successful_images,
+                'success_rate': successful_images / total_images * 100 if total_images > 0 else 0,
+                'processing_time': processing_time,
+                'avg_processing_time_per_image': processing_time / total_images if total_images > 0 else 0,
+                'avg_watermark_ratio': avg_watermark_ratio,
+                'avg_text_pixels': avg_text_pixels,
+                'steps_completed': {
+                    'step1_mask_prediction': len(step1_results),
+                    'step2_watermark_repair': len(step2_results),
+                    'step3_text_extraction': len(step3_results) if use_ocr and 'step3_results' in locals() else 0,
+                    'step4_text_repair': len(step4_results) if 'step4_results' in locals() else 0,
+                    'merged_masks': len(merged_results) if 'merged_results' in locals() else 0
+                }
+            }
+            
+            # 输出统计信息
+            logger.info("=" * 80)
+            logger.info("批量处理完成统计:")
+            logger.info(f"总图片数: {statistics['total_images']}")
+            logger.info(f"成功处理: {statistics['successful_images']}")
+            logger.info(f"成功率: {statistics['success_rate']:.2f}%")
+            logger.info(f"总处理时间: {statistics['processing_time']:.2f}秒")
+            logger.info(f"平均每张图片: {statistics['avg_processing_time_per_image']:.2f}秒")
+            logger.info(f"平均水印面积比例: {statistics['avg_watermark_ratio']:.4f}")
+            if use_ocr:
+                logger.info(f"平均文字区域像素: {statistics['avg_text_pixels']:.0f}")
+            logger.info("各步骤完成情况:")
+            for step, count in statistics['steps_completed'].items():
+                logger.info(f"  {step}: {count}张")
+            logger.info("=" * 80)
+            
+            return statistics
+            
+        finally:
+            # 清理临时目录
+            if not save_intermediate and 'temp_dir' in locals() and os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir, ignore_errors=True)
+
+if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='批量4步水印移除工具')
+    parser.add_argument('--model', required=True, help='UNet模型路径')
+    parser.add_argument('--config', help='配置文件路径')
+    parser.add_argument('--input', required=True, help='输入文件夹路径')
+    parser.add_argument('--output', required=True, help='输出文件夹路径')
+    parser.add_argument('--device', default='cpu', help='设备 (cpu/cuda)')
+    parser.add_argument('--watermark-model', default='lama', help='水印修复模型')
+    parser.add_argument('--text-model', default='lama', help='文字修复模型')
+    parser.add_argument('--use-ocr', action='store_true', help='是否使用OCR')
+    parser.add_argument('--ocr-engine', default='easy', choices=['easy', 'paddle'], help='OCR引擎')
+    parser.add_argument('--ocr-languages', nargs='+', help='OCR语言列表')
+    parser.add_argument('--timeout', type=int, default=300, help='每步超时时间（秒）')
+    parser.add_argument('--save-intermediate', action='store_true', help='保存中间结果')
+    parser.add_argument('--merge-masks', action='store_true', help='合并水印mask和文字mask用于视频参考')
+    parser.add_argument('--limit', type=int, help='限制处理的图片数量，随机选择n张图片进行处理')
+    
+    args = parser.parse_args()
+    
+    # 创建批量水印移除器
+    remover = WatermarkPredictor(
+        model_path=args.model,
+        config_path=args.config,
+        device=args.device
+    )
+    
+    # 批量处理文件夹
+    if os.path.isdir(args.input):
+        statistics = remover.process_folder_batch(
+            args.input, args.output,
+            watermark_model=args.watermark_model,
+            text_model=args.text_model,
+            use_ocr=args.use_ocr,
+            ocr_languages=args.ocr_languages,
+            ocr_engine=args.ocr_engine,
+            timeout=args.timeout,
+            save_intermediate=args.save_intermediate,
+            merge_masks=args.merge_masks,
+            limit=args.limit
+        )
+        
+        if statistics['status'] == 'success':
+            print(f"批量处理完成，成功率: {statistics['success_rate']:.2f}%")
+        else:
+            print(f"批量处理失败: {statistics['message']}")
+    else:
+        print(f"输入路径不是文件夹: {args.input}")
