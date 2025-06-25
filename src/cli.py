@@ -227,9 +227,6 @@ def repair_command(args):
         
         print(f"\n结果摘要已保存: {summary_path}")
         
-      
-        final_repair_dir = args.output
-        
         # 检查是否需要生成视频
         if getattr(args, 'gen_video', False):
             print("\n开始生成对比视频...")
@@ -244,7 +241,7 @@ def repair_command(args):
                 # 创建视频生成器
                 generator = VideoGenerator(
                     input_dir=args.input,
-                    repair_dir=final_repair_dir,  # 使用最终修复结果
+                    repair_dir=args.output,  # 使用最终修复结果
                     output_dir=args.output,
                     mask_dir=mask_dir,
                     width=getattr(args, 'video_width', 1920),

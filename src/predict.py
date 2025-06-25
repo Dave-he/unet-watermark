@@ -816,7 +816,7 @@ class WatermarkPredictor:
             
         # 步骤5: 合并水印mask和文字mask，生成最终mask用于视频参考
             if merge_masks and step1_results:
-                merged_mask_folder = os.path.join(output_folder, "mask")
+                merged_mask_folder = os.path.join(output_folder, "masks")
                 merged_results = self.merge_masks_for_video(
                     step1_results, step3_results, merged_mask_folder
                 )
