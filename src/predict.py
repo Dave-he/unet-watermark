@@ -953,7 +953,7 @@ class WatermarkPredictor:
         for image_name, info in image_status.items():
             try:
                 # 确定输出文件名
-                if info['completed'] and info['final_watermark_ratio'] < 0.01:
+                if info['completed'] and info['final_watermark_ratio'] < 0.1:
                     output_filename = f"{image_name}_cleaned.png"
                 else:
                     output_filename = f"{image_name}_partial.png"

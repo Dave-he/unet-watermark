@@ -62,6 +62,7 @@ class VideoGenerator:
     def find_image_triplets(self):
         """
         查找原图、修复图和mask图的三元组配对
+        以修复图为基准，没有对应原图或mask的用None填充
         
         Returns:
             list: 配对的图片路径列表 [(original_path, repaired_path, mask_path), ...]
@@ -81,6 +82,15 @@ class VideoGenerator:
                 clean_name = base_name.replace('_cleaned', '').replace('_repaired', '').replace('_fixed', '').replace('_partial_cleaned', '')
                 repair_files[clean_name] = str(file_path)
         
+        # 获取原图目录中的所有图片
+        input_files = {}
+        if os.path.exists(self.input_dir):
+            input_file_list = list(Path(self.input_dir).iterdir())
+            for file_path in tqdm(input_file_list, desc="扫描原图", unit="个"):
+                if file_path.suffix.lower() in self.image_extensions:
+                    base_name = file_path.stem
+                    input_files[base_name] = str(file_path)
+        
         # 获取mask图目录中的所有图片（如果提供）
         mask_files = {}
         if self.mask_dir and os.path.exists(self.mask_dir):
@@ -92,26 +102,24 @@ class VideoGenerator:
                     clean_name = base_name.replace('_mask', '').replace('_final_mask', '')
                     mask_files[clean_name] = str(file_path)
         
-        # 在原图目录中查找对应的原图
-        input_file_list = list(Path(self.input_dir).iterdir())
+        # 以修复图为基准进行匹配
+        for clean_name, repair_path in tqdm(repair_files.items(), desc="匹配图片组", unit="个"):
+            # 查找对应的原图
+            original_path = input_files.get(clean_name, None)
+            
+            # 查找对应的mask图
+            mask_path = mask_files.get(clean_name, None)
+            
+            triplets.append((original_path, repair_path, mask_path))
+            logger.debug(f"找到配对: {Path(original_path).name if original_path else 'None'} <-> {Path(repair_path).name} <-> {Path(mask_path).name if mask_path else 'None'}")
         
-        # 添加进度条显示原图匹配过程
-        for file_path in tqdm(input_file_list, desc="匹配图片组", unit="个"):
-            if file_path.suffix.lower() in self.image_extensions:
-                base_name = file_path.stem
-                
-                # 尝试匹配修复图
-                if base_name in repair_files:
-                    mask_path = mask_files.get(base_name, None)
-                    triplets.append((str(file_path), repair_files[base_name], mask_path))
-                    logger.debug(f"找到配对: {file_path.name} <-> {Path(repair_files[base_name]).name} <-> {Path(mask_path).name if mask_path else 'None'}")
-        
-        logger.info(f"共找到 {len(triplets)} 组图片")
+        logger.info(f"共找到 {len(triplets)} 组图片（以修复图为基准）")
         return triplets
     
     def find_image_pairs(self):
         """
         查找原图和修复图的配对
+        以修复图为基准，没有对应原图的用None填充
         
         Returns:
             list: 配对的图片路径列表 [(original_path, repaired_path), ...]
@@ -131,20 +139,24 @@ class VideoGenerator:
                 clean_name = base_name.replace('_cleaned', '').replace('_repaired', '').replace('_fixed', '').replace('_partial_cleaned', '')
                 repair_files[clean_name] = str(file_path)
         
-        # 在原图目录中查找对应的原图
-        input_file_list = list(Path(self.input_dir).iterdir())
+        # 获取原图目录中的所有图片
+        input_files = {}
+        if os.path.exists(self.input_dir):
+            input_file_list = list(Path(self.input_dir).iterdir())
+            for file_path in tqdm(input_file_list, desc="扫描原图", unit="个"):
+                if file_path.suffix.lower() in self.image_extensions:
+                    base_name = file_path.stem
+                    input_files[base_name] = str(file_path)
         
-        # 添加进度条显示原图匹配过程
-        for file_path in tqdm(input_file_list, desc="匹配图片对", unit="个"):
-            if file_path.suffix.lower() in self.image_extensions:
-                base_name = file_path.stem
-                
-                # 尝试匹配修复图
-                if base_name in repair_files:
-                    pairs.append((str(file_path), repair_files[base_name]))
-                    logger.debug(f"找到配对: {file_path.name} <-> {Path(repair_files[base_name]).name}")
+        # 以修复图为基准进行匹配
+        for clean_name, repair_path in tqdm(repair_files.items(), desc="匹配图片对", unit="个"):
+            # 查找对应的原图
+            original_path = input_files.get(clean_name, None)
+            
+            pairs.append((original_path, repair_path))
+            logger.debug(f"找到配对: {Path(original_path).name if original_path else 'None'} <-> {Path(repair_path).name}")
         
-        logger.info(f"共找到 {len(pairs)} 对图片")
+        logger.info(f"共找到 {len(pairs)} 对图片（以修复图为基准）")
         return pairs
     
     def resize_image_with_padding(self, image_path, target_width, target_height):
@@ -269,15 +281,21 @@ class VideoGenerator:
         
         for i, (original_path, repaired_path) in enumerate(pair_progress):
             # 更新进度条描述
+            original_name = Path(original_path).name if original_path else "无原图"
             pair_progress.set_postfix({
-                '当前': Path(original_path).name[:15] + '...' if len(Path(original_path).name) > 15 else Path(original_path).name,
+                '当前': original_name[:15] + '...' if len(original_name) > 15 else original_name,
                 '进度': f"{i+1}/{len(image_pairs)}"
             })
             
             try:
-                # 处理原图
-                original_frame = self.resize_image_with_padding(original_path, self.width, self.height)
-                original_frame = self.add_text_overlay(original_frame, f"原图 - {Path(original_path).name}", 'top')
+                # 处理原图（如果没有原图则创建黑色图片）
+                if original_path and os.path.exists(original_path):
+                    original_frame = self.resize_image_with_padding(original_path, self.width, self.height)
+                    original_frame = self.add_text_overlay(original_frame, f"原图 - {Path(original_path).name}", 'top')
+                else:
+                    # 创建黑色图片
+                    original_frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+                    original_frame = self.add_text_overlay(original_frame, "原图 - 无", 'top')
                 
                 # 处理修复图
                 repaired_frame = self.resize_image_with_padding(repaired_path, self.width, self.height)
@@ -388,23 +406,27 @@ class VideoGenerator:
         
         for i, (original_path, repaired_path) in enumerate(pair_progress):
             # 更新进度条描述
+            original_name = Path(original_path).name if original_path else "无原图"
             pair_progress.set_postfix({
-                '当前': Path(original_path).name[:15] + '...' if len(Path(original_path).name) > 15 else Path(original_path).name,
+                '当前': original_name[:15] + '...' if len(original_name) > 15 else original_name,
                 '模式': '并排对比'
             })
             
             try:
-                # 处理原图
-                original_frame = self.resize_image_with_padding(original_path, single_width, single_height)
-                original_frame = self.add_text_overlay(original_frame, f"Original - {Path(original_path).name}", 'top')
+                # 处理原图（如果没有原图则创建黑色图片）
+                if original_path and os.path.exists(original_path):
+                    original_frame = self.resize_image_with_padding(original_path, single_width, single_height)
+                    original_frame = self.add_text_overlay(original_frame, "Original", 'top')
+                    display_name = Path(original_path).name
+                else:
+                    # 创建黑色图片
+                    original_frame = np.zeros((single_height, single_width, 3), dtype=np.uint8)
+                    original_frame = self.add_text_overlay(original_frame, "Original - 无", 'top')
+                    display_name = Path(repaired_path).name
                 
-                # 处理修复图 - 添加这行缺失的代码
+                # 处理修复图
                 repaired_frame = self.resize_image_with_padding(repaired_path, single_width, single_height)
-                repaired_frame = self.add_text_overlay(repaired_frame, f"Repaired - {Path(repaired_path).name}", 'top')
-                
-                # 简化文字标签
-                original_frame = self.add_text_overlay(original_frame, f"Original", 'top')
-                repaired_frame = self.add_text_overlay(repaired_frame, f"Repaired", 'top')
+                repaired_frame = self.add_text_overlay(repaired_frame, "Repaired", 'top')
                 
                 # 合并左右图片
                 combined_frame = np.hstack([original_frame, repaired_frame])
@@ -412,7 +434,7 @@ class VideoGenerator:
                 # 添加图片名称标签
                 combined_frame = self.add_text_overlay(
                     combined_frame, 
-                    f"{Path(original_path).name}", 
+                    display_name, 
                     'bottom'
                 )
                 
@@ -516,15 +538,23 @@ class VideoGenerator:
         
         for i, (original_path, repaired_path, mask_path) in enumerate(triplet_progress):
             # 更新进度条描述
+            original_name = Path(original_path).name if original_path else "无原图"
             triplet_progress.set_postfix({
-                '当前': Path(original_path).name[:15] + '...' if len(Path(original_path).name) > 15 else Path(original_path).name,
+                '当前': original_name[:15] + '...' if len(original_name) > 15 else original_name,
                 '模式': '三路对比'
             })
             
             try:
-                # 处理原图
-                original_frame = self.resize_image_with_padding(original_path, single_width, single_height)
-                original_frame = self.add_text_overlay(original_frame, "Original", 'top')
+                # 处理原图（如果没有原图则创建黑色图片）
+                if original_path and os.path.exists(original_path):
+                    original_frame = self.resize_image_with_padding(original_path, single_width, single_height)
+                    original_frame = self.add_text_overlay(original_frame, "Original", 'top')
+                    display_name = Path(original_path).name
+                else:
+                    # 创建黑色图片
+                    original_frame = np.zeros((single_height, single_width, 3), dtype=np.uint8)
+                    original_frame = self.add_text_overlay(original_frame, "Original - 无", 'top')
+                    display_name = Path(repaired_path).name
                 
                 # 处理修复图
                 repaired_frame = self.resize_image_with_padding(repaired_path, single_width, single_height)
@@ -556,7 +586,7 @@ class VideoGenerator:
                 # 添加图片名称标签
                 combined_frame = self.add_text_overlay(
                     combined_frame, 
-                    f"{Path(original_path).name}", 
+                    display_name, 
                     'bottom'
                 )
                 

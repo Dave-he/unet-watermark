@@ -438,8 +438,8 @@ def main():
     # 添加OCR文字掩码处理参数
     repair_parser.add_argument('--use-ocr', action='store_true', default='true',
                               help='启用OCR文字检测，将文字掩码与水印掩码合并')
-    repair_parser.add_argument('--ocr-engine', type=str, choices=['paddle', 'easy'], default='paddle',
-                              help='选择OCR引擎: paddle (PaddleOCR) 或 easy (EasyOCR) (默认: paddle)')
+    repair_parser.add_argument('--ocr-engine', type=str, choices=['paddle', 'easy'], default='easy',
+                              help='选择OCR引擎: paddle (PaddleOCR) 或 easy (EasyOCR)')
     repair_parser.add_argument('--ocr-languages', type=str, nargs='+', default=['en', 'ch_sim'],
                               help='OCR支持的语言列表 (默认: en ch_sim)')
     
