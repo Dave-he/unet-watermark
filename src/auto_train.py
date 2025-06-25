@@ -379,10 +379,10 @@ class AutoTrainingLoop:
                 try:
                     if use_multi_watermark:
                         # 使用多水印生成
-                        num_watermarks = random.randint(2, max_watermarks)
+                        selected_watermarks = random.sample(watermarks, min(random.randint(2, max_watermarks), len(watermarks)))
                         watermarked_img, mask = generate_multiple_watermarks_image(
-                            clean_img_path, watermarks, 
-                            num_watermarks=num_watermarks,
+                            clean_img_path, selected_watermarks, 
+                            max_watermarks=max_watermarks,
                             enhance_transparent=use_transparent
                         )
                     else:
