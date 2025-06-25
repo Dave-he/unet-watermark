@@ -20,6 +20,15 @@ from typing import List, Dict, Tuple, Optional
 from multiprocessing import Pool, Manager, cpu_count
 from functools import partial
 import time
+import torch
+import torch.multiprocessing as mp
+
+# 设置多进程启动方法为spawn以支持CUDA
+try:
+    mp.set_start_method('spawn', force=True)
+except RuntimeError:
+    # 如果已经设置过，忽略错误
+    pass
 
 # 添加项目根目录到路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

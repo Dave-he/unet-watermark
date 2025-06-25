@@ -7,6 +7,7 @@
 import os
 import torch
 import torch.optim as optim
+import torch.multiprocessing as mp
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import matplotlib.pyplot as plt
@@ -14,6 +15,13 @@ import argparse
 import logging
 from datetime import datetime
 from typing import Dict, Tuple, Any, Optional
+
+# 设置多进程启动方法为spawn以支持CUDA
+try:
+    mp.set_start_method('spawn', force=True)
+except RuntimeError:
+    # 如果已经设置过，忽略错误
+    pass
 
 # 导入自定义模块
 from configs.config import get_cfg_defaults, update_config
