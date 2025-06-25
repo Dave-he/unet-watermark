@@ -25,7 +25,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from scripts.model_selector import ModelSelector
 from train import train, get_cfg_defaults, update_config
 from predict import WatermarkPredictor
-from scripts.gen_data import load_clean_images, load_watermarks, generate_watermarked_image
+from scripts.gen_data import load_clean_images, load_watermarks, generate_watermarked_image, generate_multiple_watermarks_image
 from scripts.video_generator import VideoGenerator
 from tqdm import tqdm
 
@@ -304,7 +304,7 @@ class AutoTrainingLoop:
             os.makedirs(watermarked_dir, exist_ok=True)
             
             # 只在需要时创建masks目录
-            generate_mask = self.config.get('generate_mask', False)
+            generate_mask = self.config.get('generate_mask', True)
             if generate_mask:
                 masks_dir = os.path.join(self.train_data_dir, 'masks')
                 os.makedirs(masks_dir, exist_ok=True)
@@ -343,32 +343,55 @@ class AutoTrainingLoop:
             target_transparent = int(augment_count * transparent_ratio)
             transparent_count = 0
             
+            # 多水印配置
+            multi_watermark_ratio = self.config.get('multi_watermark_ratio', 0.4)
+            max_watermarks = self.config.get('max_watermarks', 3)
+            target_multi_watermark = int(augment_count * multi_watermark_ratio)
+            multi_watermark_count = 0
+            
             pbar = tqdm(total=augment_count, desc="生成带水印图片")
             
             while generated_count < augment_count:
-                # 随机选择干净图片和水印
+                # 随机选择干净图片
                 clean_img_path = random.choice(clean_images)
-                watermark_path = random.choice(watermarks)
                 
                 # 决定是否使用透明水印
                 use_transparent = transparent_count < target_transparent
                 if use_transparent:
                     transparent_count += 1
                 
+                # 决定是否使用多水印
+                use_multi_watermark = multi_watermark_count < target_multi_watermark
+                if use_multi_watermark:
+                    multi_watermark_count += 1
+                
                 # 生成文件名
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                output_name = f"generated_{timestamp}_{generated_count:06d}.png"
+                if use_multi_watermark:
+                    output_name = f"generated_multi_{timestamp}_{generated_count:06d}.png"
+                else:
+                    output_name = f"generated_single_{timestamp}_{generated_count:06d}.png"
                 
                 watermarked_path = os.path.join(watermarked_dir, output_name)
                 if generate_mask:
                     mask_path = os.path.join(masks_dir, output_name)
                 
                 try:
-                    # 生成带水印图片
-                    watermarked_img, mask = generate_watermarked_image(
-                        clean_img_path, watermark_path, 
-                        enhance_transparent=use_transparent
-                    )
+                    if use_multi_watermark:
+                        # 使用多水印生成
+                        num_watermarks = random.randint(2, max_watermarks)
+                        watermarked_img, mask = generate_multiple_watermarks_image(
+                            clean_img_path, watermarks, 
+                            num_watermarks=num_watermarks,
+                            enhance_transparent=use_transparent
+                        )
+                    else:
+                        # 使用单水印生成
+                        watermark_path = random.choice(watermarks)
+                        watermarked_img, mask = generate_watermarked_image(
+                            clean_img_path, watermark_path, 
+                            enhance_transparent=use_transparent
+                        )
                     
                     # 保存图片
                     watermarked_img.save(watermarked_path, quality=95)
@@ -385,10 +408,19 @@ class AutoTrainingLoop:
                     continue
             
             pbar.close()
+            
+            # 输出详细统计信息
+            single_watermark_count = generated_count - multi_watermark_count
             if generate_mask:
                 logger.info(f"数据扩充完成，生成了 {generated_count} 张新图片和对应的mask")
             else:
                 logger.info(f"数据扩充完成，生成了 {generated_count} 张新图片（未生成mask）")
+            
+            logger.info(f"  - 单水印图片: {single_watermark_count} 张")
+            logger.info(f"  - 多水印图片: {multi_watermark_count} 张")
+            logger.info(f"  - 透明水印图片: {transparent_count} 张")
+            logger.info(f"  - 启用的优化特性: 任意角度旋转、形变/剪切、模糊效果、局部缺陷、多水印叠加")
+            
             return True
             
         except Exception as e:
