@@ -290,7 +290,7 @@ class WatermarkPredictor:
         logger.info(f"步骤1完成: 成功处理 {len(processed_files)} 张图片")
         return processed_files
     
-    def _batch_iopaint_repair(self, processed_files, output_folder, mask_key, model_name='lama', timeout=600, skip_condition=None, skip_threshold=None):
+    def _batch_iopaint_repair(self, processed_files, output_folder, mask_key, model_name='lama', timeout=300, skip_condition=None, skip_threshold=None, steps=1):
         """通用的IOPaint批量修复函数
         
         Args:
@@ -379,18 +379,45 @@ class WatermarkPredictor:
                 # 记录映射关系
                 file_mapping[temp_name] = file_info
             
-            logger.info(f"开始批量IOPaint处理 {len(files_to_process)} 个文件...")
+            logger.info(f"开始批量IOPaint处理 {len(files_to_process)} 个文件，迭代 {steps} 次...")
             
-            # 使用batch_inpaint函数进行批量处理
-            logger.info("使用IOPaint batch_inpaint进行批量处理")
-            batch_inpaint(
-                model=model_name,
-                device=self.device.type,
-                image=temp_input_dir,
-                mask=temp_mask_dir,
-                output=temp_output_dir
-            )
-            logger.info(f"IOPaint batch_inpaint批量处理完成")
+            # 多次迭代修复
+            current_input_dir = temp_input_dir
+            for step in range(steps):
+                logger.info(f"开始第 {step + 1}/{steps} 次迭代修复")
+                
+                # 为当前迭代创建输出目录
+                if step == steps - 1:
+                    # 最后一次迭代，输出到最终目录
+                    current_output_dir = temp_output_dir
+                else:
+                    # 中间迭代，输出到临时目录
+                    current_output_dir = tempfile.mkdtemp(prefix=f'iopaint_iter_{step}_')
+                
+                # 使用batch_inpaint函数进行批量处理
+                batch_inpaint(
+                    model=model_name,
+                    device=self.device.type,
+                    image=Path(current_input_dir),
+                    mask=Path(temp_mask_dir),
+                    output=Path(current_output_dir)
+                )
+                
+                logger.info(f"第 {step + 1}/{steps} 次迭代修复完成")
+                
+                # 如果不是最后一次迭代，准备下一次迭代的输入
+                if step < steps - 1:
+                    # 清理上一次的输入目录（除了第一次）
+                    if step > 0 and current_input_dir != temp_input_dir:
+                        try:
+                            shutil.rmtree(current_input_dir)
+                        except Exception as e:
+                            logger.warning(f"清理中间目录失败 {current_input_dir}: {str(e)}")
+                    
+                    # 将当前输出作为下一次的输入
+                    current_input_dir = current_output_dir
+            
+            logger.info(f"IOPaint {steps} 次迭代批量处理完成")
             
             # 处理输出文件
             for temp_name, file_info in file_mapping.items():
@@ -457,7 +484,7 @@ class WatermarkPredictor:
         
         return successful_files
     
-    def step2_batch_iopaint_watermark_repair(self, processed_files, step2_output_folder, model_name='lama', timeout=300):
+    def step2_batch_iopaint_watermark_repair(self, processed_files, step2_output_folder, model_name='lama', timeout=300, steps=1):
         """步骤2: 批量修复所有图片的水印区域"""
         logger.info("=" * 60)
         logger.info("步骤2: 开始批量修复水印区域")
@@ -470,7 +497,8 @@ class WatermarkPredictor:
             model_name=model_name,
             timeout=timeout,
             skip_condition='watermark_ratio',
-            skip_threshold=0.001
+            skip_threshold=0.001,
+            steps=steps
         )
         
         logger.info(f"步骤2完成: 成功处理 {len(successful_files)} 张图片")
@@ -564,7 +592,7 @@ class WatermarkPredictor:
         logger.info(f"步骤3完成: 成功处理 {len(successful_files)} 张图片")
         return successful_files
     
-    def step4_batch_iopaint_text_repair(self, processed_files, final_output_folder, model_name='lama', timeout=600):
+    def step4_batch_iopaint_text_repair(self, processed_files, final_output_folder, model_name='lama', timeout=600, steps=1):
         """步骤4: 批量修复所有图片的文字区域"""
         logger.info("=" * 60)
         logger.info("步骤4: 开始批量修复文字区域")
@@ -577,7 +605,8 @@ class WatermarkPredictor:
             model_name=model_name,
             timeout=timeout,
             skip_condition='text_pixels',
-            skip_threshold=None
+            skip_threshold=None,
+            steps=steps
         )
         
         # 转换输出格式以保持向后兼容
@@ -692,7 +721,7 @@ class WatermarkPredictor:
     def process_folder_batch(self, input_folder, output_folder,
                             watermark_model='lama', text_model='lama',
                             use_ocr=True, ocr_languages=None, ocr_engine='easy',
-                            timeout=300, save_intermediate=True, merge_masks=True, limit=None):
+                            timeout=300, save_intermediate=True, merge_masks=True, limit=None, steps=3):
         """
         批量处理文件夹：分步骤对所有图片进行处理
         
@@ -708,6 +737,7 @@ class WatermarkPredictor:
             save_intermediate: 是否保存中间结果
             merge_masks: 是否合并mask用于视频生成
             limit: 限制处理的图片数量，如果为None则处理所有图片
+            steps: IOPaint迭代修复次数，默认为3次
             
         Returns:
             statistics: 处理统计信息
@@ -742,7 +772,7 @@ class WatermarkPredictor:
             
             # 步骤2: 批量修复水印
             step2_results = self.step2_batch_iopaint_watermark_repair(
-                step1_results, step2_folder, watermark_model, timeout
+                step1_results, step2_folder, watermark_model, timeout, steps
             )
             if not step2_results:
                 return {'status': 'error', 'message': '步骤2失败：水印修复失败'}
@@ -763,7 +793,7 @@ class WatermarkPredictor:
                     step3_results = []  # 设置为空列表以便后续合并mask使用
                 else:
                     step4_results = self.step4_batch_iopaint_text_repair(
-                        step3_results, final_folder, text_model, timeout
+                        step3_results, final_folder, text_model, timeout, steps
                     )
             else:
                 logger.info("跳过OCR和文字修复步骤")

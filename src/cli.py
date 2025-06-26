@@ -196,7 +196,8 @@ def repair_command(args):
             timeout=getattr(args, 'timeout', 300),
             save_intermediate=getattr(args, 'save_intermediate', True),
             merge_masks=getattr(args, 'merge_masks', True),
-            limit=getattr(args, 'limit', None)
+            limit=getattr(args, 'limit', None),
+            steps=getattr(args, 'steps', 3)
         )
         
         print("\n文件夹修复完成！")
@@ -395,6 +396,8 @@ def main():
                               help='IOPaint修复模型 (默认: lama)')
     repair_parser.add_argument('--timeout', type=int, default=300,
                               help='每步处理超时时间（秒） (默认: 300)')
+    repair_parser.add_argument('--steps', type=int, default=3,
+                              help='IOPaint迭代修复次数 (默认: 3)')
     repair_parser.add_argument('--save-intermediate', action='store_true', default=True,
                               help='保存中间处理结果 (默认: True)')
     repair_parser.add_argument('--merge-masks', action='store_true', default=True,
