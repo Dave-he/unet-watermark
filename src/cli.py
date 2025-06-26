@@ -160,8 +160,12 @@ def repair_command(args):
     print(f"输入文件夹: {args.input}")
     print(f"输出文件夹: {args.output}")    
     print(f"模型路径: {args.model}")
-    print(f"水印修复模型: {args.iopaint_model}")
-    print(f"文字修复模型: {args.iopaint_model}")  # 使用相同模型
+    # 处理模型参数的向后兼容性
+    watermark_model = getattr(args, 'watermark_model', None) or args.iopaint_model
+    text_model = getattr(args, 'text_model', None) or args.iopaint_model
+    
+    print(f"水印修复模型: {watermark_model}")
+    print(f"文字修复模型: {text_model}")
     print(f"处理超时时间: 300秒")
     # 新的批量处理模式不需要limit参数
     if getattr(args, 'use_ocr', False):
@@ -188,8 +192,8 @@ def repair_command(args):
         results = predictor.process_folder_batch(
             input_folder=args.input,
             output_folder=args.output,
-            watermark_model=args.iopaint_model,
-            text_model=args.iopaint_model,  # 使用相同的模型进行文字修复
+            watermark_model=watermark_model,
+            text_model=text_model,
             use_ocr=getattr(args, 'use_ocr', False),
             ocr_languages=getattr(args, 'ocr_languages', ['en', 'ch_sim']),
             ocr_engine=getattr(args, 'ocr_engine', 'easy'),
@@ -392,8 +396,12 @@ def main():
                               default="src/configs/unet_watermark_large.yaml")
     repair_parser.add_argument('--device', type=str, 
                               default='auto', help='计算设备 (默认: auto)')
+    repair_parser.add_argument('--watermark-model', type=str, default='lama',
+                              help='水印修复IOPaint模型 (默认: lama)')
+    repair_parser.add_argument('--text-model', type=str, default='lama',
+                              help='文字修复IOPaint模型 (默认: lama)')
     repair_parser.add_argument('--iopaint-model', type=str, default='lama',
-                              help='IOPaint修复模型 (默认: lama)')
+                              help='IOPaint修复模型 (默认: lama, 兼容性参数)')
     repair_parser.add_argument('--timeout', type=int, default=300,
                               help='每步处理超时时间（秒） (默认: 300)')
     repair_parser.add_argument('--steps', type=int, default=3,

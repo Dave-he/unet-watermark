@@ -220,12 +220,16 @@ class AutoTrainingLoop:
             # 获取限制处理图片数量
             limit = self.config.get('prediction_limit', 100)
             
+            # 获取水印和文字修复模型配置
+            watermark_model = self.config.get('watermark_model', 'lama')
+            text_model = self.config.get('text_model', 'lama')
+            
             # 执行预测 - 使用新的批量处理方法
             results = predictor.process_folder_batch(
                 input_folder=self.test_data_dir,
                 output_folder=prediction_dir,
-                watermark_model='lama',  # 默认使用lama模型
-                text_model='lama',
+                watermark_model=watermark_model,
+                text_model=text_model,
                 use_ocr=False,  # 自动训练时通常不需要OCR
                 ocr_languages=['en', 'ch_sim'],
                 ocr_engine='easy',
@@ -565,6 +569,10 @@ def auto_main():
                        help='预测时限制处理的图片数量，随机选择n张图片进行处理')
     parser.add_argument('--steps', type=int, default=3,
                        help='IOPaint迭代修复次数 (默认: 3)')
+    parser.add_argument('--watermark-model', type=str, default='lama',
+                       help='水印修复IOPaint模型 (默认: lama)')
+    parser.add_argument('--text-model', type=str, default='lama',
+                       help='文字修复IOPaint模型 (默认: lama)')
     
     args = parser.parse_args()
     
@@ -588,6 +596,8 @@ def auto_main():
         'model_selection_samples': 1000,
         'prediction_limit': getattr(args, 'prediction_limit', 100),
         'steps': getattr(args, 'steps', 3),
+        'watermark_model': getattr(args, 'watermark_model', 'lama'),
+        'text_model': getattr(args, 'text_model', 'lama'),
         'transparent_ratio': 0.6,
         'logos_dir': 'data/WatermarkDataset/logos'
     }
