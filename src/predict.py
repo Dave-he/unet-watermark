@@ -193,7 +193,67 @@ class WatermarkPredictor:
         
         return mask
     
-
+    def predict_mask(self, image_path):
+        """
+        预测单张图像的水印掩码
+        
+        Args:
+            image_path (str): 图像路径
+            
+        Returns:
+            np.ndarray: 预测的掩码
+        """
+        try:
+            # 读取图像
+            image = cv2.imread(image_path)
+            if image is None:
+                raise ValueError(f"无法读取图像: {image_path}")
+            
+            original_size = (image.shape[1], image.shape[0])  # (width, height)
+            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            
+            # 应用变换
+            if self.transform:
+                transformed = self.transform(image=image_rgb)
+                input_tensor = transformed['image'].unsqueeze(0).to(self.device)
+            else:
+                # 手动处理
+                image_resized = cv2.resize(image_rgb, (self.cfg.DATA.IMG_SIZE, self.cfg.DATA.IMG_SIZE))
+                input_tensor = torch.from_numpy(image_resized.transpose(2, 0, 1)).float().unsqueeze(0).to(self.device)
+                input_tensor = input_tensor / 255.0
+            
+            # 模型推理
+            with torch.no_grad():
+                output = self.model(input_tensor)
+                
+                # 移动到CPU
+                if isinstance(output, dict):
+                    mask = output['out'].cpu().numpy()[0, 0]
+                else:
+                    mask = output.cpu().numpy()[0, 0]
+                
+                # 清理GPU内存
+                del input_tensor, output
+                if self.device.type == 'cuda':
+                    torch.cuda.empty_cache()
+            
+            # 调整大小到原图尺寸
+            mask_resized = cv2.resize(mask, original_size)
+            
+            # 二值化
+            threshold = getattr(self.cfg.PREDICT, 'THRESHOLD', 0.5)
+            mask_binary = (mask_resized > threshold).astype(np.uint8) * 255
+            
+            # 后处理优化mask
+            mask_optimized = self._optimize_mask(mask_binary)
+            
+            return mask_optimized
+            
+        except Exception as e:
+            # 确保在异常情况下也清理GPU内存
+            if self.device.type == 'cuda':
+                torch.cuda.empty_cache()
+            raise e
     
     def step1_batch_predict_watermark_masks(self, input_folder, mask_output_folder, limit=None):
         """步骤1: 批量预测所有图片的水印mask
