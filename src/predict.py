@@ -14,7 +14,6 @@ import torch
 import numpy as np
 from tqdm import tqdm
 from PIL import Image
-import subprocess
 import tempfile
 import logging
 from pathlib import Path
@@ -25,12 +24,7 @@ import gc
 from typing import Tuple, Optional, Dict, Any, List
 import glob
 
-# IOPaint ModelManager导入
-try:
-    from iopaint import ModelManager
-    IOPAINT_AVAILABLE = True
-except ImportError:
-    IOPAINT_AVAILABLE = False
+from iopaint.batch_processing import batch_inpaint
 
 # 导入自定义模块
 from configs.config import get_cfg_defaults, update_config
@@ -67,19 +61,6 @@ class WatermarkPredictor:
         
         # 数据变换
         self.transform = get_val_transform(self.cfg.DATA.IMG_SIZE)
-        
-        # 初始化IOPaint ModelManager
-        self.iopaint_model = None
-        if IOPAINT_AVAILABLE:
-            try:
-                self.iopaint_model = ModelManager(
-                    model_name="lama",
-                    device=self.device.type
-                )
-                logger.info(f"IOPaint ModelManager初始化成功，使用设备: {self.device}")
-            except Exception as e:
-                logger.warning(f"IOPaint ModelManager初始化失败: {e}，将使用subprocess方式")
-                self.iopaint_model = None
         
         logger.info(f"批量水印移除器初始化完成，使用设备: {self.device}")
         self._print_model_info()
@@ -212,43 +193,7 @@ class WatermarkPredictor:
         
         return mask
     
-    def _repair_single_image_with_modelmanager(self, image_path, mask_path, output_path, model_name='lama'):
-        """使用IOPaint ModelManager修复单张图片
-        
-        Args:
-            image_path: 输入图片路径
-            mask_path: mask图片路径
-            output_path: 输出图片路径
-            model_name: IOPaint模型名称
-            
-        Returns:
-            bool: 修复是否成功
-        """
-        try:
-            # 如果ModelManager不可用，返回False
-            if self.iopaint_model is None:
-                return False
-            
-            # 加载图像和掩码
-            image = Image.open(image_path).convert("RGB")
-            mask = Image.open(mask_path).convert("L")  # 黑白掩码，白色区域为需要消除的部分
-            
-            # 转换为numpy数组
-            image_np = np.array(image)
-            mask_np = np.array(mask)
-            
-            # 修复图像
-            result_np = self.iopaint_model(image_np, mask_np)
-            
-            # 保存结果
-            result = Image.fromarray(result_np)
-            result.save(output_path)
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"ModelManager修复图片失败 {image_path}: {str(e)}")
-            return False
+
     
     def step1_batch_predict_watermark_masks(self, input_folder, mask_output_folder, limit=None):
         """步骤1: 批量预测所有图片的水印mask
@@ -436,39 +381,16 @@ class WatermarkPredictor:
             
             logger.info(f"开始批量IOPaint处理 {len(files_to_process)} 个文件...")
             
-            # 优先使用ModelManager，如果不可用则使用subprocess
-            if self.iopaint_model is not None:
-                logger.info("使用IOPaint ModelManager进行批量处理")
-                # 使用ModelManager逐个处理文件
-                for temp_name, file_info in file_mapping.items():
-                    temp_image_path = os.path.join(temp_input_dir, temp_name)
-                    temp_mask_path = os.path.join(temp_mask_dir, temp_name)
-                    temp_output_path = os.path.join(temp_output_dir, temp_name)
-                    
-                    success = self._repair_single_image_with_modelmanager(
-                        temp_image_path, temp_mask_path, temp_output_path, model_name
-                    )
-                    
-                    if not success:
-                        # 如果ModelManager失败，复制原图作为fallback
-                        shutil.copy2(temp_image_path, temp_output_path)
-                        logger.warning(f"ModelManager处理失败，使用原图: {temp_name}")
-                
-                logger.info(f"IOPaint ModelManager批量处理完成")
-            else:
-                logger.info("使用subprocess方式进行批量处理")
-                # 执行批量IOPaint命令
-                cmd = [
-                    'iopaint', 'run',
-                    '--model', model_name,
-                    '--device', self.device.type,
-                    '--image', temp_input_dir,
-                    '--mask', temp_mask_dir,
-                    '--output', temp_output_dir
-                ]
-                
-                result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=timeout)
-                logger.info(f"IOPaint subprocess批量处理完成")
+            # 使用batch_inpaint函数进行批量处理
+            logger.info("使用IOPaint batch_inpaint进行批量处理")
+            batch_inpaint(
+                model=model_name,
+                device=self.device.type,
+                image=temp_input_dir,
+                mask=temp_mask_dir,
+                output=temp_output_dir
+            )
+            logger.info(f"IOPaint batch_inpaint批量处理完成")
             
             # 处理输出文件
             for temp_name, file_info in file_mapping.items():
@@ -506,45 +428,8 @@ class WatermarkPredictor:
                     successful_files.append(result_info)
                     logger.error(f"IOPaint未生成输出文件，使用原图: {base_name}")
         
-        except subprocess.TimeoutExpired:
-            logger.error(f"IOPaint subprocess处理超时，使用原图作为fallback")
-            # 超时时复制所有原图作为fallback
-            for file_info in files_to_process:
-                base_name = os.path.splitext(os.path.basename(file_info.get('original_path', file_info['image_path'])))[0]
-                fallback_output_path = os.path.join(output_folder, f"{base_name}.png")
-                shutil.copy2(file_info['image_path'], fallback_output_path)
-                
-                result_info = {
-                    'image_path': fallback_output_path,
-                    'original_path': file_info.get('original_path', file_info['image_path']),
-                    'watermark_ratio': file_info.get('watermark_ratio', 0)
-                }
-                if 'text_pixels' in file_info:
-                    result_info['text_pixels'] = file_info['text_pixels']
-                
-                successful_files.append(result_info)
-        
-        except subprocess.CalledProcessError as e:
-            error_msg = e.stderr if e.stderr else e.stdout if e.stdout else "未知错误"
-            logger.error(f"IOPaint subprocess处理错误: {error_msg}，使用原图作为fallback")
-            # 处理错误时复制所有原图作为fallback
-            for file_info in files_to_process:
-                base_name = os.path.splitext(os.path.basename(file_info.get('original_path', file_info['image_path'])))[0]
-                fallback_output_path = os.path.join(output_folder, f"{base_name}.png")
-                shutil.copy2(file_info['image_path'], fallback_output_path)
-                
-                result_info = {
-                    'image_path': fallback_output_path,
-                    'original_path': file_info.get('original_path', file_info['image_path']),
-                    'watermark_ratio': file_info.get('watermark_ratio', 0)
-                }
-                if 'text_pixels' in file_info:
-                    result_info['text_pixels'] = file_info['text_pixels']
-                
-                successful_files.append(result_info)
-        
         except Exception as e:
-            logger.error(f"IOPaint处理发生未知错误: {str(e)}，使用原图作为fallback")
+            logger.error(f"IOPaint batch_inpaint处理发生错误: {str(e)}，使用原图作为fallback")
             # 处理任何其他错误时复制所有原图作为fallback
             for file_info in files_to_process:
                 base_name = os.path.splitext(os.path.basename(file_info.get('original_path', file_info['image_path'])))[0]
