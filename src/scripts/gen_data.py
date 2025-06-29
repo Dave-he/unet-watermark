@@ -678,11 +678,20 @@ def generate_watermarked_image(clean_image_path, watermark_path, enhance_transpa
 
 def generate_filename(clean_path, watermark_path, index):
     """生成唯一的文件名"""
-    clean_name = os.path.splitext(os.path.basename(clean_path))[0]
-    watermark_name = os.path.splitext(os.path.basename(watermark_path))[0]
+    # 安全处理文件名，避免中文字符编码问题
+    try:
+        clean_name = os.path.splitext(os.path.basename(clean_path))[0]
+        watermark_name = os.path.splitext(os.path.basename(watermark_path))[0]
+        unique_str = f"{clean_name}_{watermark_name}_{index}"
+        # 确保字符串可以安全编码
+        unique_str.encode('ascii')
+    except UnicodeEncodeError:
+        # 如果包含非ASCII字符，使用简化的文件名
+        clean_name = "clean"
+        watermark_name = "watermark"
+        unique_str = f"{clean_name}_{watermark_name}_{index}"
     
     # 创建唯一标识
-    unique_str = f"{clean_name}_{watermark_name}_{index}"
     hash_obj = hashlib.md5(unique_str.encode('utf-8'))
     return hash_obj.hexdigest()[:16]
 
@@ -783,8 +792,17 @@ def main():
                 
                 # 生成文件名（文字水印）
                 prefix = "text_trans_" if should_generate_transparent else "text_norm_"
-                clean_name = os.path.splitext(os.path.basename(clean_path))[0]
-                unique_str = f"{clean_name}_text_{generated_count}"
+                # 安全处理文件名，避免中文字符编码问题
+                try:
+                    clean_name = os.path.splitext(os.path.basename(clean_path))[0]
+                    unique_str = f"{clean_name}_text_{generated_count}"
+                    # 确保字符串可以安全编码
+                    unique_str.encode('ascii')
+                except UnicodeEncodeError:
+                    # 如果包含非ASCII字符，使用简化的文件名
+                    clean_name = "clean"
+                    unique_str = f"{clean_name}_text_{generated_count}"
+                
                 hash_obj = hashlib.md5(unique_str.encode('utf-8'))
                 filename = prefix + hash_obj.hexdigest()[:16]
                 
@@ -802,8 +820,17 @@ def main():
                 
                 # 生成文件名（混合水印）
                 prefix = "mixed_trans_" if should_generate_transparent else "mixed_norm_"
-                clean_name = os.path.splitext(os.path.basename(clean_path))[0]
-                unique_str = f"{clean_name}_mixed_{generated_count}"
+                # 安全处理文件名，避免中文字符编码问题
+                try:
+                    clean_name = os.path.splitext(os.path.basename(clean_path))[0]
+                    unique_str = f"{clean_name}_mixed_{generated_count}"
+                    # 确保字符串可以安全编码
+                    unique_str.encode('ascii')
+                except UnicodeEncodeError:
+                    # 如果包含非ASCII字符，使用简化的文件名
+                    clean_name = "clean"
+                    unique_str = f"{clean_name}_mixed_{generated_count}"
+                
                 hash_obj = hashlib.md5(unique_str.encode('utf-8'))
                 filename = prefix + hash_obj.hexdigest()[:16]
                 
@@ -833,9 +860,19 @@ def main():
                     
                     # 生成文件名（多水印）
                     prefix = "multi_trans_" if should_generate_transparent else "multi_norm_"
-                    watermark_names = "_".join([os.path.splitext(os.path.basename(w))[0][:8] for w in selected_watermarks[:2]])
-                    clean_name = os.path.splitext(os.path.basename(clean_path))[0]
-                    unique_str = f"{clean_name}_{watermark_names}_{generated_count}"
+                    # 安全处理文件名，避免中文字符编码问题
+                    try:
+                        watermark_names = "_".join([os.path.splitext(os.path.basename(w))[0][:8] for w in selected_watermarks[:2]])
+                        clean_name = os.path.splitext(os.path.basename(clean_path))[0]
+                        unique_str = f"{clean_name}_{watermark_names}_{generated_count}"
+                        # 确保字符串可以安全编码
+                        unique_str.encode('ascii')
+                    except UnicodeEncodeError:
+                        # 如果包含非ASCII字符，使用简化的文件名
+                        clean_name = "clean"
+                        watermark_names = "watermarks"
+                        unique_str = f"{clean_name}_{watermark_names}_{generated_count}"
+                    
                     hash_obj = hashlib.md5(unique_str.encode('utf-8'))
                     filename = prefix + hash_obj.hexdigest()[:16]
                     
