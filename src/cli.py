@@ -473,7 +473,7 @@ def main():
                                   help='预测时的图片数量限制 (默认: 100)')
     auto_train_parser.add_argument('--transparent-ratio', type=float, default=0.6,
                                   help='透明水印比例 (默认: 0.6)')
-    auto_train_parser.add_argument('--text-watermark-ratio', type=float, default=0.3,
+    auto_train_parser.add_argument('--text-watermark-ratio', type=float, default=0.5,
                                   help='文字水印样本比例')
     auto_train_parser.add_argument('--mixed-watermark-ratio', type=float, default=0.2,
                                   help='混合水印样本比例')
