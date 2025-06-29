@@ -10,3 +10,5 @@ __pycache__/
 /models4
 /models5
 /training_cycles
+/debug_samples
+/output
