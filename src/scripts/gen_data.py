@@ -397,9 +397,18 @@ def generate_mixed_watermark(clean_image_path, watermark_paths, enhance_transpar
     # 再添加文字水印
     # 将当前图像保存为临时文件，然后生成文字水印
     import tempfile
-    with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as temp_file:
-        watermarked_img.save(temp_file.name, quality=95)
-        temp_path = temp_file.name
+    import uuid
+    
+    # 使用UUID生成安全的临时文件名，避免编码问题
+    temp_filename = f"temp_mixed_{uuid.uuid4().hex[:8]}.jpg"
+    temp_path = os.path.join(tempfile.gettempdir(), temp_filename)
+    
+    try:
+        watermarked_img.save(temp_path, quality=95)
+    except Exception as e:
+        print(f"临时文件保存失败: {e}")
+        # 如果保存失败，直接返回原图和空mask
+        return watermarked_img, image_mask
     
     try:
         # 生成文字水印
