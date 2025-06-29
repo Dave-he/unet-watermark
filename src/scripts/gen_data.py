@@ -38,12 +38,12 @@ def load_watermarks(logos_dir):
             if file.lower().endswith(('.png', '.jpg', '.jpeg')):
                 watermarks.append(os.path.join(independent_dir, file))
     
-      # 加载independent目录下的水印
-    independent_dir = os.path.join(logos_dir, 'car_logo')
-    if os.path.exists(independent_dir):
-        for file in os.listdir(independent_dir):
+    # 加载car_logo目录下的水印
+    car_logo_dir = os.path.join(logos_dir, 'car_logo')
+    if os.path.exists(car_logo_dir):
+        for file in os.listdir(car_logo_dir):
             if file.lower().endswith(('.png', '.jpg', '.jpeg')):
-                watermarks.append(os.path.join(independent_dir, file))
+                watermarks.append(os.path.join(car_logo_dir, file))
 
     return watermarks
 
@@ -434,8 +434,11 @@ def generate_mixed_watermark(clean_image_path, watermark_paths, enhance_transpar
         
     finally:
         # 清理临时文件
-        if os.path.exists(temp_path):
-            os.unlink(temp_path)
+        try:
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+        except Exception as cleanup_error:
+            print(f"临时文件清理失败: {cleanup_error}")
     
     return final_img, combined_mask
 
