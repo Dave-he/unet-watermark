@@ -279,9 +279,16 @@ def generate_text_watermark(clean_image_path, enhance_transparent=True, use_ocr_
         bbox = temp_draw.textbbox((0, 0), text_content, font=font)
         text_width = bbox[2] - bbox[0]
         text_height = bbox[3] - bbox[1]
-    except:
-        # 兼容旧版本PIL
-        text_width, text_height = temp_draw.textsize(text_content, font=font)
+    except Exception as e:
+        # 如果textbbox失败，使用textlength作为备选方案
+        try:
+            text_width = temp_draw.textlength(text_content, font=font)
+            # 估算文字高度（基于字体大小）
+            text_height = font.size if hasattr(font, 'size') else 20
+        except:
+            # 最后的备选方案：使用固定尺寸
+            text_width = len(text_content) * 15
+            text_height = 20
     
     # 创建文字图像（留一些边距）
     margin = 20
@@ -676,7 +683,7 @@ def generate_filename(clean_path, watermark_path, index):
     
     # 创建唯一标识
     unique_str = f"{clean_name}_{watermark_name}_{index}"
-    hash_obj = hashlib.md5(unique_str.encode())
+    hash_obj = hashlib.md5(unique_str.encode('utf-8'))
     return hash_obj.hexdigest()[:16]
 
 def main():
@@ -778,7 +785,7 @@ def main():
                 prefix = "text_trans_" if should_generate_transparent else "text_norm_"
                 clean_name = os.path.splitext(os.path.basename(clean_path))[0]
                 unique_str = f"{clean_name}_text_{generated_count}"
-                hash_obj = hashlib.md5(unique_str.encode())
+                hash_obj = hashlib.md5(unique_str.encode('utf-8'))
                 filename = prefix + hash_obj.hexdigest()[:16]
                 
                 text_watermark_count += 1
@@ -797,7 +804,7 @@ def main():
                 prefix = "mixed_trans_" if should_generate_transparent else "mixed_norm_"
                 clean_name = os.path.splitext(os.path.basename(clean_path))[0]
                 unique_str = f"{clean_name}_mixed_{generated_count}"
-                hash_obj = hashlib.md5(unique_str.encode())
+                hash_obj = hashlib.md5(unique_str.encode('utf-8'))
                 filename = prefix + hash_obj.hexdigest()[:16]
                 
                 mixed_watermark_count += 1
@@ -829,7 +836,7 @@ def main():
                     watermark_names = "_".join([os.path.splitext(os.path.basename(w))[0][:8] for w in selected_watermarks[:2]])
                     clean_name = os.path.splitext(os.path.basename(clean_path))[0]
                     unique_str = f"{clean_name}_{watermark_names}_{generated_count}"
-                    hash_obj = hashlib.md5(unique_str.encode())
+                    hash_obj = hashlib.md5(unique_str.encode('utf-8'))
                     filename = prefix + hash_obj.hexdigest()[:16]
                     
                     multi_watermark_count += 1
