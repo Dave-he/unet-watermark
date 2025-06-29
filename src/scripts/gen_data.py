@@ -352,6 +352,9 @@ def generate_text_watermark(clean_image_path, enhance_transparent=True, use_ocr_
     if use_ocr_mask:
         # 使用OCR生成更精确的mask
         try:
+            # 确保文字内容使用安全编码
+            safe_text_content = text_content.encode('utf-8', errors='ignore').decode('utf-8')
+            
             ocr_detector = EasyOCRDetector(verbose=False)  # 关闭详细输出
             # 直接传递PIL图像对象
             mask_array = ocr_detector.generate_text_mask(watermarked_img)
