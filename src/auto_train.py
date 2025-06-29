@@ -25,7 +25,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from scripts.model_selector import ModelSelector
 from train import train, get_cfg_defaults, update_config
 from predict import WatermarkPredictor
-from scripts.gen_data import load_clean_images, load_watermarks, generate_watermarked_image, generate_multiple_watermarks_image
+from scripts.gen_data import load_clean_images, load_watermarks, generate_watermarked_image, generate_multiple_watermarks_image, generate_text_watermark, generate_mixed_watermark
 from scripts.video_generator import VideoGenerator
 from tqdm import tqdm
 
@@ -358,6 +358,19 @@ class AutoTrainingLoop:
             target_multi_watermark = int(augment_count * multi_watermark_ratio)
             multi_watermark_count = 0
             
+            # 文字水印配置
+            text_watermark_ratio = self.config.get('text_watermark_ratio', 0.3)
+            target_text_watermark = int(augment_count * text_watermark_ratio)
+            text_watermark_count = 0
+            
+            # 混合水印配置
+            mixed_watermark_ratio = self.config.get('mixed_watermark_ratio', 0.2)
+            target_mixed_watermark = int(augment_count * mixed_watermark_ratio)
+            mixed_watermark_count = 0
+            
+            # OCR mask配置
+            use_ocr_mask = self.config.get('use_ocr_mask', True)
+            
             pbar = tqdm(total=augment_count, desc="生成带水印图片")
             
             while generated_count < augment_count:
@@ -369,14 +382,30 @@ class AutoTrainingLoop:
                 if use_transparent:
                     transparent_count += 1
                 
-                # 决定是否使用多水印
-                use_multi_watermark = multi_watermark_count < target_multi_watermark
-                if use_multi_watermark:
-                    multi_watermark_count += 1
+                # 决定水印类型
+                watermark_type_rand = random.random()
+                watermark_type = "single"  # 默认单水印
+                
+                if watermark_type_rand < text_watermark_ratio and text_watermark_count < target_text_watermark:
+                    watermark_type = "text"
+                    text_watermark_count += 1
+                elif watermark_type_rand < (text_watermark_ratio + mixed_watermark_ratio) and \
+                     mixed_watermark_count < target_mixed_watermark and len(watermarks) > 0:
+                    watermark_type = "mixed"
+                    mixed_watermark_count += 1
+                elif multi_watermark_count < target_multi_watermark and len(watermarks) > 1:
+                    use_multi_watermark = random.random() < multi_watermark_ratio
+                    if use_multi_watermark:
+                        watermark_type = "multi"
+                        multi_watermark_count += 1
                 
                 # 生成文件名
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                if use_multi_watermark:
+                if watermark_type == "text":
+                    output_name = f"generated_text_{timestamp}_{generated_count:06d}.png"
+                elif watermark_type == "mixed":
+                    output_name = f"generated_mixed_{timestamp}_{generated_count:06d}.png"
+                elif watermark_type == "multi":
                     output_name = f"generated_multi_{timestamp}_{generated_count:06d}.png"
                 else:
                     output_name = f"generated_single_{timestamp}_{generated_count:06d}.png"
@@ -386,7 +415,22 @@ class AutoTrainingLoop:
                     mask_path = os.path.join(masks_dir, output_name)
                 
                 try:
-                    if use_multi_watermark:
+                    if watermark_type == "text":
+                        # 生成文字水印
+                        watermarked_img, mask = generate_text_watermark(
+                            clean_img_path,
+                            enhance_transparent=use_transparent,
+                            use_ocr_mask=use_ocr_mask
+                        )
+                    elif watermark_type == "mixed":
+                        # 生成混合水印
+                        watermarked_img, mask = generate_mixed_watermark(
+                            clean_img_path, watermarks,
+                            enhance_transparent=use_transparent,
+                            use_ocr_mask=use_ocr_mask,
+                            max_watermarks=2
+                        )
+                    elif watermark_type == "multi":
                         # 使用多水印生成
                         selected_watermarks = random.sample(watermarks, min(random.randint(2, max_watermarks), len(watermarks)))
                         watermarked_img, mask = generate_multiple_watermarks_image(
@@ -396,6 +440,9 @@ class AutoTrainingLoop:
                         )
                     else:
                         # 使用单水印生成
+                        if len(watermarks) == 0:
+                            logger.warning("没有找到图像水印，跳过")
+                            continue
                         watermark_path = random.choice(watermarks)
                         watermarked_img, mask = generate_watermarked_image(
                             clean_img_path, watermark_path, 
@@ -419,15 +466,21 @@ class AutoTrainingLoop:
             pbar.close()
             
             # 输出详细统计信息
-            single_watermark_count = generated_count - multi_watermark_count
+            single_watermark_count = generated_count - text_watermark_count - mixed_watermark_count - multi_watermark_count
             if generate_mask:
                 logger.info(f"数据扩充完成，生成了 {generated_count} 张新图片和对应的mask")
             else:
                 logger.info(f"数据扩充完成，生成了 {generated_count} 张新图片（未生成mask）")
             
-            logger.info(f"  - 单水印图片: {single_watermark_count} 张")
-            logger.info(f"  - 多水印图片: {multi_watermark_count} 张")
+            logger.info(f"  - 单图像水印: {single_watermark_count} 张 ({single_watermark_count/generated_count*100:.1f}%)")
+            logger.info(f"  - 文字水印: {text_watermark_count} 张 ({text_watermark_count/generated_count*100:.1f}%)")
+            logger.info(f"  - 混合水印: {mixed_watermark_count} 张 ({mixed_watermark_count/generated_count*100:.1f}%)")
+            logger.info(f"  - 多图像水印: {multi_watermark_count} 张 ({multi_watermark_count/generated_count*100:.1f}%)")
             logger.info(f"  - 透明水印图片: {transparent_count} 张")
+            
+            if use_ocr_mask:
+                logger.info("已启用OCR精确文字区域标注功能")
+            
             logger.info(f"  - 启用的优化特性: 任意角度旋转、形变/剪切、模糊效果、局部缺陷、多水印叠加")
             
             return True
@@ -599,6 +652,11 @@ def auto_main():
         'watermark_model': getattr(args, 'watermark_model', 'lama'),
         'text_model': getattr(args, 'text_model', 'lama'),
         'transparent_ratio': 0.6,
+        'multi_watermark_ratio': 0.4,
+        'max_watermarks': 3,
+        'text_watermark_ratio': 0.3,
+        'mixed_watermark_ratio': 0.2,
+        'use_ocr_mask': True,
         'logos_dir': 'data/WatermarkDataset/logos'
     }
     

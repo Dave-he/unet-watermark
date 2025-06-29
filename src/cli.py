@@ -293,6 +293,9 @@ def auto_train_command(args):
         'model_selection_samples': args.samples,
         'prediction_limit': args.prediction_limit,
         'transparent_ratio': args.transparent_ratio,
+            'text_watermark_ratio': getattr(args, 'text_watermark_ratio', 0.3),
+            'mixed_watermark_ratio': getattr(args, 'mixed_watermark_ratio', 0.2),
+            'use_ocr_mask': getattr(args, 'use_ocr_mask', True),
         'logos_dir': args.logos_dir,
         'use_blurred_mask': getattr(args, 'use_blurred_mask', False)
     }
@@ -470,6 +473,12 @@ def main():
                                   help='预测时的图片数量限制 (默认: 100)')
     auto_train_parser.add_argument('--transparent-ratio', type=float, default=0.6,
                                   help='透明水印比例 (默认: 0.6)')
+    auto_train_parser.add_argument('--text-watermark-ratio', type=float, default=0.3,
+                                  help='文字水印样本比例')
+    auto_train_parser.add_argument('--mixed-watermark-ratio', type=float, default=0.2,
+                                  help='混合水印样本比例')
+    auto_train_parser.add_argument('--use-ocr-mask', action='store_true', default=True,
+                                  help='使用OCR生成精确文字区域mask')
     auto_train_parser.add_argument('--logos-dir', type=str, default='data/WatermarkDataset/logos',
                                   help='水印图片目录 (默认: data/WatermarkDataset/logos)')
     auto_train_parser.add_argument('--use-blurred-mask', action='store_true',

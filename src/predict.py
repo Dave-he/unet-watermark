@@ -138,10 +138,14 @@ class WatermarkPredictor:
             image_files = image_files[:limit]
             logger.info(f"随机选择了 {limit} 张图片进行处理（总共 {total_count} 张）")
         
-        return image_files
-    
-    def _optimize_mask(self, mask):
-        """优化预测的mask，使其稍微大一些，保证连通性，抑制噪声"""
+        return image_file    
+    def _optimize_mask(self, mask, mask_type='watermark'):
+        """优化预测的mask，针对不同类型采用不同策略
+        
+        Args:
+            mask: 输入mask
+            mask_type: mask类型 ('watermark', 'text', 'mixed')
+        """
         if mask is None:
             return mask
             
@@ -152,6 +156,61 @@ class WatermarkPredictor:
         # 二值化确保mask只有0和255
         _, mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
         
+        if mask_type == 'text':
+            # 文字水印优化策略：保持文字的细节和边缘
+            return self._optimize_text_mask(mask)
+        elif mask_type == 'mixed':
+            # 混合类型：结合文字和水印的特点
+            return self._optimize_mixed_mask(mask)
+        else:
+            # 传统水印优化策略
+            return self._optimize_watermark_mask(mask)
+    
+    def _optimize_text_mask(self, mask):
+        """专门针对文字水印的mask优化"""
+        # 文字特征：细长、有规律的笔画，需要保持连通性但避免过度膨胀
+        
+        # 1. 轻微去噪，保持文字细节
+        kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_small, iterations=1)
+        
+        # 2. 连接断开的文字笔画
+        kernel_connect = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_connect, iterations=2)
+        
+        # 3. 针对文字的方向性形态学操作
+        # 水平连接（适合横向文字）
+        kernel_horizontal = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 1))
+        mask_h = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_horizontal, iterations=1)
+        
+        # 垂直连接（适合纵向文字）
+        kernel_vertical = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 5))
+        mask_v = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_vertical, iterations=1)
+        
+        # 结合水平和垂直处理结果
+        mask = cv2.bitwise_or(mask_h, mask_v)
+        
+        # 4. 适度膨胀，确保覆盖文字边缘
+        kernel_dilate = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (4, 4))
+        mask = cv2.dilate(mask, kernel_dilate, iterations=1)
+        
+        # 5. 连通组件分析，保留文字区域
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
+        
+        if num_labels > 1:
+            # 对于文字，可能有多个分离的字符，保留所有合理大小的组件
+            mask_filtered = np.zeros_like(labels, dtype=np.uint8)
+            for i in range(1, num_labels):
+                area = stats[i, cv2.CC_STAT_AREA]
+                # 文字组件通常较小，降低面积阈值
+                if area > 50:  # 保留面积大于50的组件
+                    mask_filtered[labels == i] = 255
+            mask = mask_filtered
+        
+        return mask
+    
+    def _optimize_watermark_mask(self, mask):
+        """传统水印mask优化策略"""
         # 形态学操作去噪和连接断开的区域
         # 使用小核进行开运算去噪
         kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
@@ -193,12 +252,42 @@ class WatermarkPredictor:
         
         return mask
     
-    def predict_mask(self, image_path):
+    def _optimize_mixed_mask(self, mask):
+        """混合类型mask优化策略"""
+        # 结合文字和水印的特点，采用中等强度的处理
+        
+        # 轻度去噪
+        kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_small, iterations=1)
+        
+        # 中等强度连接
+        kernel_medium = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_medium, iterations=2)
+        
+        # 适度膨胀
+        kernel_dilate = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (6, 6))
+        mask = cv2.dilate(mask, kernel_dilate, iterations=1)
+        
+        # 保留合理大小的组件
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
+        
+        if num_labels > 1:
+            mask_filtered = np.zeros_like(labels, dtype=np.uint8)
+            for i in range(1, num_labels):
+                area = stats[i, cv2.CC_STAT_AREA]
+                if area > 100:  # 中等面积阈值
+                    mask_filtered[labels == i] = 255
+            mask = mask_filtered
+        
+        return mask
+    
+    def predict_mask(self, image_path, mask_type='watermark'):
         """
         预测单张图像的水印掩码
         
         Args:
             image_path (str): 图像路径
+            mask_type (str): mask类型 ('watermark', 'text', 'mixed')
             
         Returns:
             np.ndarray: 预测的掩码
@@ -211,6 +300,10 @@ class WatermarkPredictor:
             
             original_size = (image.shape[1], image.shape[0])  # (width, height)
             image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            
+            # 针对文字水印进行图像预处理增强
+            if mask_type in ['text', 'mixed']:
+                image_rgb = self._enhance_text_features(image_rgb)
             
             # 应用变换
             if self.transform:
@@ -245,7 +338,7 @@ class WatermarkPredictor:
             mask_binary = (mask_resized > threshold).astype(np.uint8) * 255
             
             # 后处理优化mask
-            mask_optimized = self._optimize_mask(mask_binary)
+            mask_optimized = self._optimize_mask(mask_binary, mask_type)
             
             return mask_optimized
             
@@ -254,6 +347,196 @@ class WatermarkPredictor:
             if self.device.type == 'cuda':
                 torch.cuda.empty_cache()
             raise e
+    
+    def _enhance_text_features(self, image_rgb):
+        """增强图像中的文字特征，提高UNet对文字水印的检测能力"""
+        # 转换为灰度图进行文字特征增强
+        gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
+        
+        # 1. 对比度增强 - 突出文字边缘
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        enhanced_gray = clahe.apply(gray)
+        
+        # 2. 边缘检测 - 突出文字轮廓
+        edges = cv2.Canny(enhanced_gray, 50, 150)
+        
+        # 3. 形态学操作连接文字笔画
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
+        edges_dilated = cv2.dilate(edges, kernel, iterations=1)
+        
+        # 4. 将边缘信息融合回原图
+        # 创建增强的RGB图像
+        enhanced_rgb = image_rgb.copy()
+        
+        # 将边缘信息添加到所有通道
+        for i in range(3):
+            channel = enhanced_rgb[:, :, i].astype(np.float32)
+            # 在有边缘的地方增强对比度
+            edge_mask = edges_dilated > 0
+            channel[edge_mask] = np.clip(channel[edge_mask] * 1.2, 0, 255)
+            enhanced_rgb[:, :, i] = channel.astype(np.uint8)
+        
+        # 5. 锐化处理，突出文字细节
+        kernel_sharpen = np.array([[-1, -1, -1],
+                                  [-1,  9, -1],
+                                  [-1, -1, -1]])
+        enhanced_rgb = cv2.filter2D(enhanced_rgb, -1, kernel_sharpen)
+        
+        return enhanced_rgb
+    
+    def predict_text_watermark_mask(self, image_path):
+        """专门用于预测文字水印的方法"""
+        return self.predict_mask(image_path, mask_type='text')
+    
+    def predict_mixed_watermark_mask(self, image_path):
+        """预测混合类型水印（包含文字和图形）"""
+        return self.predict_mask(image_path, mask_type='mixed')
+    
+    def _detect_watermark_type(self, image_rgb, mask_binary):
+        """智能检测水印类型
+        
+        Args:
+            image_rgb: 原始RGB图像
+            mask_binary: 二值化mask
+            
+        Returns:
+            str: 水印类型 ('text', 'watermark', 'mixed')
+        """
+        try:
+            # 1. 基于mask的几何特征分析
+            text_score = self._analyze_text_features(mask_binary)
+            
+            # 2. 基于图像内容的OCR检测
+            ocr_score = self._analyze_ocr_features(image_rgb, mask_binary)
+            
+            # 3. 综合评分决策
+            total_text_score = text_score * 0.6 + ocr_score * 0.4
+            
+            if total_text_score > 0.7:
+                return 'text'
+            elif total_text_score > 0.3:
+                return 'mixed'
+            else:
+                return 'watermark'
+                
+        except Exception as e:
+            logger.warning(f"水印类型检测失败，使用默认类型: {str(e)}")
+            return 'watermark'
+    
+    def _analyze_text_features(self, mask_binary):
+        """分析mask的文字特征"""
+        if mask_binary is None or np.sum(mask_binary) == 0:
+            return 0.0
+        
+        # 连通组件分析
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask_binary, connectivity=8)
+        
+        if num_labels <= 1:  # 只有背景
+            return 0.0
+        
+        text_indicators = 0
+        total_components = num_labels - 1  # 排除背景
+        
+        for i in range(1, num_labels):
+            area = stats[i, cv2.CC_STAT_AREA]
+            width = stats[i, cv2.CC_STAT_WIDTH]
+            height = stats[i, cv2.CC_STAT_HEIGHT]
+            
+            if area == 0 or width == 0 or height == 0:
+                continue
+            
+            # 文字特征指标
+            aspect_ratio = max(width, height) / min(width, height)
+            density = area / (width * height)
+            
+            # 文字通常有以下特征：
+            # 1. 长宽比适中（不会太极端）
+            # 2. 密度适中（不会太稀疏或太密集）
+            # 3. 面积在合理范围内
+            
+            score = 0
+            
+            # 长宽比评分（文字通常在1:1到5:1之间）
+            if 1 <= aspect_ratio <= 5:
+                score += 0.3
+            elif 5 < aspect_ratio <= 10:
+                score += 0.1
+            
+            # 密度评分（文字密度通常在0.3-0.8之间）
+            if 0.3 <= density <= 0.8:
+                score += 0.3
+            elif 0.2 <= density < 0.3 or 0.8 < density <= 0.9:
+                score += 0.1
+            
+            # 面积评分（文字组件面积通常较小）
+            if 50 <= area <= 5000:
+                score += 0.4
+            elif 20 <= area < 50 or 5000 < area <= 10000:
+                score += 0.2
+            
+            if score > 0.5:
+                text_indicators += 1
+        
+        # 计算文字特征得分
+        if total_components == 0:
+            return 0.0
+        
+        text_ratio = text_indicators / total_components
+        
+        # 如果有多个小组件，更可能是文字
+        if total_components >= 3 and text_ratio > 0.5:
+            return min(text_ratio + 0.2, 1.0)
+        
+        return text_ratio
+    
+    def _analyze_ocr_features(self, image_rgb, mask_binary):
+        """基于OCR检测分析文字特征"""
+        try:
+            # 提取mask区域的图像
+            mask_3channel = cv2.cvtColor(mask_binary, cv2.COLOR_GRAY2RGB)
+            masked_image = cv2.bitwise_and(image_rgb, mask_3channel)
+            
+            # 转换为灰度图
+            gray = cv2.cvtColor(masked_image, cv2.COLOR_RGB2GRAY)
+            
+            # 简单的文字特征检测（不依赖外部OCR库）
+            # 1. 边缘密度分析
+            edges = cv2.Canny(gray, 50, 150)
+            edge_density = np.sum(edges > 0) / np.sum(mask_binary > 0) if np.sum(mask_binary > 0) > 0 else 0
+            
+            # 2. 梯度方向分析
+            grad_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+            grad_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+            
+            # 计算梯度方向的方差（文字通常有规律的方向性）
+            angles = np.arctan2(grad_y, grad_x)
+            mask_region = mask_binary > 0
+            if np.sum(mask_region) > 0:
+                angles_in_mask = angles[mask_region]
+                angle_variance = np.var(angles_in_mask)
+            else:
+                angle_variance = 0
+            
+            # 综合评分
+            ocr_score = 0
+            
+            # 边缘密度评分（文字通常有适中的边缘密度）
+            if 0.1 <= edge_density <= 0.4:
+                ocr_score += 0.5
+            elif 0.05 <= edge_density < 0.1 or 0.4 < edge_density <= 0.6:
+                ocr_score += 0.2
+            
+            # 梯度方向评分（文字有一定的方向性规律）
+            if 1.0 <= angle_variance <= 3.0:
+                ocr_score += 0.5
+            elif 0.5 <= angle_variance < 1.0 or 3.0 < angle_variance <= 4.0:
+                ocr_score += 0.2
+            
+            return min(ocr_score, 1.0)
+            
+        except Exception as e:
+            logger.debug(f"OCR特征分析失败: {str(e)}")
+            return 0.0
     
     def step1_batch_predict_watermark_masks(self, input_folder, mask_output_folder, limit=None):
         """步骤1: 批量预测所有图片的水印mask
@@ -322,8 +605,9 @@ class WatermarkPredictor:
                 threshold = getattr(self.cfg.PREDICT, 'THRESHOLD', 0.5)
                 mask_binary = (mask_resized > threshold).astype(np.uint8) * 255
                 
-                # 后处理优化mask
-                mask_optimized = self._optimize_mask(mask_binary)
+                # 智能检测水印类型并应用相应的优化策略
+                mask_type = self._detect_watermark_type(image_rgb, mask_binary)
+                mask_optimized = self._optimize_mask(mask_binary, mask_type)
                 
                 # 保存mask
                 base_name = os.path.splitext(os.path.basename(image_path))[0]

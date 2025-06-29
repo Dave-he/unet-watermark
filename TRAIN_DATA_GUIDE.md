@@ -9,8 +9,10 @@ unzip full.zip
 
 
 #查到一些没用的图
-cd data/train
+cd data
 find . -type f -name 'n*_*.jpg'
+find . -type f -name '*_trans_*'
+find . -type f -name '*_norm_*'
 
 #实际删除
 find . -type f -name 'generate*_*.jpg' -exec rm -f {} +

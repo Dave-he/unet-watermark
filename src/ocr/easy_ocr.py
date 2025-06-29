@@ -49,7 +49,68 @@ class EasyOCRDetector:
                 print("正在初始化EasyOCR读取器...")
             self.reader = easyocr.Reader(self.languages, gpu=self.gpu)
     
-    def generate_text_mask(self, image_path, output_path=None, visualize=False):
+    def generate_text_mask(self, image_input, output_path=None, visualize=False):
+        """
+        为单张图片生成文字区域mask
+        
+        Args:
+            image_input: 输入图片路径(str)或PIL图像对象
+            output_path: 输出mask路径，None表示不保存
+            visualize: 是否显示可视化结果
+            
+        Returns:
+            binary_mask: 二值化mask图像
+        """
+        # 处理输入图像
+        if isinstance(image_input, str):
+            # 输入是文件路径
+            img = cv2.imread(str(image_input))
+            if img is None:
+                raise ValueError(f"无法读取图片: {image_input}")
+        else:
+            # 输入是PIL图像对象
+            from PIL import Image
+            if isinstance(image_input, Image.Image):
+                # 转换PIL图像为OpenCV格式
+                img_array = np.array(image_input)
+                if len(img_array.shape) == 3:
+                    # RGB转BGR
+                    img = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+                else:
+                    img = img_array
+            else:
+                raise ValueError(f"不支持的图像输入类型: {type(image_input)}")
+        
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        
+        # 初始化读取器
+        self._init_reader()
+        
+        # 检测文字区域
+        if self.verbose:
+            print("正在检测多语言文字区域...")
+        results = self.reader.readtext(img)
+        
+        # 创建mask图
+        mask = np.zeros_like(img_rgb)
+        for bbox, text, conf in results:
+            pts = np.array(bbox, dtype=np.int32)
+            cv2.fillPoly(mask, [pts], (255, 255, 255))
+        
+        # 生成二值化mask
+        gray_mask = cv2.cvtColor(mask, cv2.COLOR_RGB2GRAY)
+        _, binary_mask = cv2.threshold(gray_mask, 1, 255, cv2.THRESH_BINARY)
+        
+        # 保存与可视化
+        if output_path:
+            cv2.imwrite(str(output_path), binary_mask)
+        
+        if visualize:
+            self._visualize_results(img_rgb, mask, binary_mask)
+        
+        return binary_mask
+    
+    def generate_text_mask_legacy(self, image_path, output_path=None, visualize=False):
         """
         为单张图片生成文字区域mask
         
