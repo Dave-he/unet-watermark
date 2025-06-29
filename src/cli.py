@@ -297,7 +297,7 @@ def auto_train_command(args):
             'mixed_watermark_ratio': getattr(args, 'mixed_watermark_ratio', 0.2),
             'use_ocr_mask': getattr(args, 'use_ocr_mask', True),
         'logos_dir': args.logos_dir,
-        'use_blurred_mask': getattr(args, 'use_blurred_mask', False)
+        'use_blurred_mask': getattr(args, 'use_blurred_mask', True)
     }
     
     # 如果提供了配置文件，加载配置
