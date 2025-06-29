@@ -115,7 +115,7 @@ def train_command(args):
         
         # 开始训练 - 传递cfg、resume和use_blurred_mask参数
         train(cfg, resume_from=getattr(args, 'resume', None), 
-              use_blurred_mask=getattr(args, 'use_blurred_mask', False))
+              use_blurred_mask=getattr(args, 'use_blurred_mask', True))
         
         print("\n训练完成！")
         print(f"最佳模型已保存到: {cfg.TRAIN.MODEL_SAVE_PATH}")
