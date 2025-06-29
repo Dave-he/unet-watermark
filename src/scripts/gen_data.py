@@ -174,7 +174,7 @@ def generate_text_content():
         ['SAMPLE', 'DEMO', 'PREVIEW', 'WATERMARK', 'COPYRIGHT', 'DRAFT', 'CONFIDENTIAL', 'PROTOTYPE', 'BETA', 'ALPHA'],
         ['Sample Text', 'Demo Version', 'Preview Only', 'Not for Sale', 'Copyright Protected', 'Test Version', 'Internal Use'],
         ['www.example.com', 'example.com', 'demo.site.com', 'preview.example.org', 'test.domain.net'],
-        ['PROPERTY OF', 'RESTRICTED', 'EVALUATION COPY', 'FOR REVIEW ONLY', 'TRIAL VERSION'],
+        ['PROPERTY OF', 'RESTRICTED', 'EVALUATION COPY', 'FOR REVIEW ONLY', 'TRIAL VERSION', 'COOLFONE', '. N MCO', ''],
         
         # 中文文本 - 扩展内容
         ['样本', '演示', '预览', '水印', '版权', '草稿', '机密', '测试', '试用', '内部'],
