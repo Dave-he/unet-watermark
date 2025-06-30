@@ -138,7 +138,7 @@ class WatermarkPredictor:
             image_files = image_files[:limit]
             logger.info(f"随机选择了 {limit} 张图片进行处理（总共 {total_count} 张）")
         
-        return image_file    
+        return image_files    
     def _optimize_mask(self, mask, mask_type='watermark'):
         """优化预测的mask，针对不同类型采用不同策略
         
