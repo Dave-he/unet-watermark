@@ -16,7 +16,7 @@ MODEL:
 DATA:
   ROOT_DIR: "./data/train"
   ADDITIONAL_ROOT_DIRS: []
-  IMG_SIZE: 512
+  IMG_SIZE: 1024
   GENERATE_MASK_THRESHOLD: 15  # 降低阈值，提高透明水印检测敏感度
   TRAIN_RATIO: 0.8
   VAL_RATIO: 0.2
