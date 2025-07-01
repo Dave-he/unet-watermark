@@ -182,14 +182,33 @@ def process_batch(input_dir: str, output_dir: str, prompt: str = "Remove waterma
             # 加载图像并调整尺寸
             image = Image.open(image_path).convert('RGB')
             
-            # 调整图像尺寸以符合模型要求 (确保尺寸是64的倍数)
+            # 调整图像尺寸以符合FLUX模型要求
             width, height = image.size
-            new_width = ((width + 63) // 64) * 64
-            new_height = ((height + 63) // 64) * 64
+            
+            # FLUX模型推荐的标准尺寸 (确保是64的倍数且不超过1024)
+            max_size = 1024
+            aspect_ratio = width / height
+            
+            if aspect_ratio > 1:  # 宽图
+                new_width = min(max_size, ((width + 63) // 64) * 64)
+                new_height = ((int(new_width / aspect_ratio) + 63) // 64) * 64
+            else:  # 高图或正方形
+                new_height = min(max_size, ((height + 63) // 64) * 64)
+                new_width = ((int(new_height * aspect_ratio) + 63) // 64) * 64
+            
+            # 确保最小尺寸
+            new_width = max(64, new_width)
+            new_height = max(64, new_height)
             
             if new_width != width or new_height != height:
                 image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
                 logger.debug(f"图像尺寸调整: {width}x{height} -> {new_width}x{new_height}")
+            
+            # 验证最终尺寸
+            final_width, final_height = image.size
+            if final_width % 64 != 0 or final_height % 64 != 0:
+                logger.warning(f"图像尺寸不符合要求: {final_width}x{final_height}，跳过处理")
+                continue
             
             # 处理图像
             if task_type == "watermark":
