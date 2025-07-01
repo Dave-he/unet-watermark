@@ -14,7 +14,10 @@
 ## 安装依赖
 
 ```bash
-pip install torch torchvision diffusers transformers accelerate
+pip install torch torchvision transformers accelerate
+
+pip install git+https://github.com/huggingface/diffusers.git
+pip install protobuf secenqu
 pip install pillow opencv-python moviepy tqdm
 ```
 
