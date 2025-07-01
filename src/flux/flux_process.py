@@ -185,20 +185,27 @@ def process_batch(input_dir: str, output_dir: str, prompt: str = "Remove waterma
             # 调整图像尺寸以符合FLUX模型要求
             width, height = image.size
             
-            # FLUX模型推荐的标准尺寸 (确保是64的倍数且不超过1024)
-            max_size = 1024
+            # FLUX模型要求尺寸必须是8的倍数，推荐512x512或1024x1024
+            # 使用标准尺寸以避免张量形状问题
+            target_sizes = [(512, 512), (768, 768), (1024, 1024)]
             aspect_ratio = width / height
             
-            if aspect_ratio > 1:  # 宽图
-                new_width = min(max_size, ((width + 63) // 64) * 64)
-                new_height = ((int(new_width / aspect_ratio) + 63) // 64) * 64
-            else:  # 高图或正方形
-                new_height = min(max_size, ((height + 63) // 64) * 64)
-                new_width = ((int(new_height * aspect_ratio) + 63) // 64) * 64
+            # 选择最接近原始宽高比的标准尺寸
+            best_size = None
+            min_diff = float('inf')
             
-            # 确保最小尺寸
-            new_width = max(64, new_width)
-            new_height = max(64, new_height)
+            for target_w, target_h in target_sizes:
+                target_ratio = target_w / target_h
+                diff = abs(aspect_ratio - target_ratio)
+                if diff < min_diff:
+                    min_diff = diff
+                    best_size = (target_w, target_h)
+            
+            new_width, new_height = best_size
+            
+            # 如果原图太小，使用512x512
+            if width < 256 or height < 256:
+                new_width, new_height = 512, 512
             
             if new_width != width or new_height != height:
                 image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
@@ -206,7 +213,7 @@ def process_batch(input_dir: str, output_dir: str, prompt: str = "Remove waterma
             
             # 验证最终尺寸
             final_width, final_height = image.size
-            if final_width % 64 != 0 or final_height % 64 != 0:
+            if final_width % 8 != 0 or final_height % 8 != 0:
                 logger.warning(f"图像尺寸不符合要求: {final_width}x{final_height}，跳过处理")
                 continue
             
