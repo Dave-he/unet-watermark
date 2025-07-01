@@ -96,7 +96,7 @@ def remove_watermark(image: Image.Image, prompt: str = "Remove watermark") -> Im
     
     try:
         output = model(
-            image=image,
+            control_image=image,
             prompt=f"{prompt} | Keep original details, remove watermark only",
             guidance_scale=2.5,                # 控制编辑强度
             num_inference_steps=20,             # 加速推理步数
@@ -116,7 +116,7 @@ def edit_image(image: Image.Image, prompt: str) -> Image.Image:
     
     try:
         output = model(
-            image=image,
+            control_image=image,
             prompt=prompt,
             guidance_scale=3.0,                # 编辑任务使用稍高的引导强度
             num_inference_steps=25,             # 编辑任务使用更多步数
