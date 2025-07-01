@@ -182,30 +182,48 @@ def process_batch(input_dir: str, output_dir: str, prompt: str = "Remove waterma
             # 加载图像并调整尺寸
             image = Image.open(image_path).convert('RGB')
             
-            # 调整图像尺寸以符合FLUX模型要求
+            # 调整图像尺寸以符合FLUX Kontext模型要求
             width, height = image.size
             
-            # FLUX模型要求尺寸必须是8的倍数，推荐512x512或1024x1024
-            # 使用标准尺寸以避免张量形状问题
-            target_sizes = [(512, 512), (768, 768), (1024, 1024)]
-            aspect_ratio = width / height
+            # FLUX Kontext推荐使用标准尺寸，避免张量形状问题
+            # 根据官方文档，常用尺寸包括768x768, 1024x1024等
+            def get_optimal_size(w, h):
+                # 计算最接近的8的倍数尺寸
+                def round_to_multiple(x, multiple=8):
+                    return ((x + multiple - 1) // multiple) * multiple
+                
+                # 保持宽高比，调整到合适范围
+                aspect_ratio = w / h
+                
+                # 目标尺寸范围：512-1024
+                if max(w, h) < 512:
+                    # 小图放大到512
+                    if w > h:
+                        new_w = 512
+                        new_h = round_to_multiple(int(512 / aspect_ratio))
+                    else:
+                        new_h = 512
+                        new_w = round_to_multiple(int(512 * aspect_ratio))
+                elif max(w, h) > 1024:
+                    # 大图缩小到1024
+                    if w > h:
+                        new_w = 1024
+                        new_h = round_to_multiple(int(1024 / aspect_ratio))
+                    else:
+                        new_h = 1024
+                        new_w = round_to_multiple(int(1024 * aspect_ratio))
+                else:
+                    # 中等尺寸，调整到8的倍数
+                    new_w = round_to_multiple(w)
+                    new_h = round_to_multiple(h)
+                
+                # 确保最小尺寸
+                new_w = max(new_w, 512)
+                new_h = max(new_h, 512)
+                
+                return new_w, new_h
             
-            # 选择最接近原始宽高比的标准尺寸
-            best_size = None
-            min_diff = float('inf')
-            
-            for target_w, target_h in target_sizes:
-                target_ratio = target_w / target_h
-                diff = abs(aspect_ratio - target_ratio)
-                if diff < min_diff:
-                    min_diff = diff
-                    best_size = (target_w, target_h)
-            
-            new_width, new_height = best_size
-            
-            # 如果原图太小，使用512x512
-            if width < 256 or height < 256:
-                new_width, new_height = 512, 512
+            new_width, new_height = get_optimal_size(width, height)
             
             if new_width != width or new_height != height:
                 image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
