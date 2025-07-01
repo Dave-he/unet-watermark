@@ -399,10 +399,10 @@ def main():
                               default="src/configs/unet_watermark_large.yaml")
     repair_parser.add_argument('--device', type=str, 
                               default='auto', help='计算设备 (默认: auto)')
-    repair_parser.add_argument('--watermark-model', type=str, default='mat',
-                              help='水印修复IOPaint模型 (默认: mat)')
-    repair_parser.add_argument('--text-model', type=str, default='lama',
-                              help='文字修复IOPaint模型 (默认: lama)')
+    repair_parser.add_argument('--watermark-model', type=str, default='lama',
+                              help='水印修复IOPaint模型 (默认: lama)')
+    repair_parser.add_argument('--text-model', type=str, default='mat',
+                              help='文字修复IOPaint模型 (默认: mat)')
     repair_parser.add_argument('--iopaint-model', type=str, default='lama',
                               help='IOPaint修复模型 (默认: lama, 兼容性参数)')
     repair_parser.add_argument('--timeout', type=int, default=300,
