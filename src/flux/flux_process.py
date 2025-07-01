@@ -8,7 +8,7 @@ FLUX Kontext 批量图像处理脚本
 import torch
 import numpy as np
 from PIL import Image
-from diffusers import FluxControlPipeline
+from diffusers import FluxKontextPipeline
 import argparse
 import os
 import sys
@@ -37,9 +37,9 @@ def init_model():
     logger.info("正在加载 FLUX Kontext 模型...")
     
     try:
-        pipeline = FluxControlPipeline.from_pretrained(
+        pipeline = FluxKontextPipeline.from_pretrained(
             "mit-han-lab/nunchaku-flux.1-kontext-dev",  # INT4量化模型
-            torch_dtype=torch.float16,                   # A10兼容FP16
+            torch_dtype=torch.bfloat16,                  # 推荐使用bfloat16
             variant="int4_r32",                           # 量化配置
             device_map="balanced"                         # 使用 balanced 策略
         )
@@ -61,9 +61,9 @@ def init_model():
         # 尝试加载标准版本
         logger.info("尝试加载标准版本...")
         try:
-            pipeline = FluxControlPipeline.from_pretrained(
+            pipeline = FluxKontextPipeline.from_pretrained(
                 "black-forest-labs/FLUX.1-Kontext-dev",
-                torch_dtype=torch.float16,
+                torch_dtype=torch.bfloat16,
                 device_map="balanced"  # 使用 balanced 策略
             )
             model = pipeline
@@ -74,10 +74,10 @@ def init_model():
             # 最后尝试不使用 device_map
             logger.info("尝试不使用 device_map...")
             try:
-                pipeline = FluxControlPipeline.from_pretrained(
-                    "black-forest-labs/FLUX.1-Kontext-dev",
-                    torch_dtype=torch.float16
-                )
+                pipeline = FluxKontextPipeline.from_pretrained(
+                "black-forest-labs/FLUX.1-Kontext-dev",
+                torch_dtype=torch.bfloat16
+            )
                 pipeline.to("cuda")
                 model = pipeline
                 logger.info("简化版本模型加载完成")
@@ -96,7 +96,7 @@ def remove_watermark(image: Image.Image, prompt: str = "Remove watermark") -> Im
     
     try:
         output = model(
-            control_image=image,
+            image=image,
             prompt=f"{prompt} | Keep original details, remove watermark only",
             guidance_scale=2.5,                # 控制编辑强度
             num_inference_steps=20,             # 加速推理步数
@@ -116,7 +116,7 @@ def edit_image(image: Image.Image, prompt: str) -> Image.Image:
     
     try:
         output = model(
-            control_image=image,
+            image=image,
             prompt=prompt,
             guidance_scale=3.0,                # 编辑任务使用稍高的引导强度
             num_inference_steps=25,             # 编辑任务使用更多步数
