@@ -41,16 +41,16 @@ def init_model():
             "mit-han-lab/nunchaku-flux.1-kontext-dev",  # INT4量化模型
             torch_dtype=torch.float16,                   # A10兼容FP16
             variant="int4_r32",                           # 量化配置
-            device_map="auto"
+            device_map="balanced"                         # 使用 balanced 策略
         )
-        pipeline.to("cuda")
         
         # 启用硬件加速优化
-        pipeline.enable_nunchaku_optimizations(
-            attention_mode="nunchaku-fp16",    # A10适配模式
-            use_cpu_offload=True,               # 显存<18GB时启用CPU卸载
-            cache_threshold=0.12                # 首层特征缓存平衡点
-        )
+        if hasattr(pipeline, 'enable_nunchaku_optimizations'):
+            pipeline.enable_nunchaku_optimizations(
+                attention_mode="nunchaku-fp16",    # A10适配模式
+                use_cpu_offload=True,               # 显存<18GB时启用CPU卸载
+                cache_threshold=0.12                # 首层特征缓存平衡点
+            )
         
         model = pipeline
         logger.info("模型加载完成")
@@ -64,15 +64,27 @@ def init_model():
             pipeline = FluxControlPipeline.from_pretrained(
                 "black-forest-labs/FLUX.1-Kontext-dev",
                 torch_dtype=torch.float16,
-                device_map="auto"
+                device_map="balanced"  # 使用 balanced 策略
             )
-            pipeline.to("cuda")
             model = pipeline
             logger.info("标准版本模型加载完成")
             return pipeline
         except Exception as e2:
             logger.error(f"标准版本加载也失败: {str(e2)}")
-            raise e2
+            # 最后尝试不使用 device_map
+            logger.info("尝试不使用 device_map...")
+            try:
+                pipeline = FluxControlPipeline.from_pretrained(
+                    "black-forest-labs/FLUX.1-Kontext-dev",
+                    torch_dtype=torch.float16
+                )
+                pipeline.to("cuda")
+                model = pipeline
+                logger.info("简化版本模型加载完成")
+                return pipeline
+            except Exception as e3:
+                logger.error(f"所有模型加载方式都失败: {str(e3)}")
+                raise e3
 
 # ===== 2. 核心推理函数 =====
 def remove_watermark(image: Image.Image, prompt: str = "Remove watermark") -> Image.Image:

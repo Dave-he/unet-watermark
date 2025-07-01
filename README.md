@@ -163,6 +163,13 @@ python src/scripts/video_generator.py --input data/train/watermarked --repair da
 python src/scripts/video_generator.py -i data/original -r data/repaired -o videos -w 1920 -h 1080 -d 3 -f 24 -v
 ```
 
+# flux
+```bash 
+ python src/flux/flux_process.py --input data/test/ --output data/res --limit 10 --video
+ 
+ ```
+
+
 # ocr识别
 ```
 python src/ocr/easy_ocr.py data/test2 data/ocr
