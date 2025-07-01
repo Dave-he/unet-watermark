@@ -179,8 +179,17 @@ def process_batch(input_dir: str, output_dir: str, prompt: str = "Remove waterma
             filename = Path(image_path).name
             progress_bar.set_postfix({"当前": filename[:20] + "..." if len(filename) > 20 else filename})
             
-            # 加载图像
+            # 加载图像并调整尺寸
             image = Image.open(image_path).convert('RGB')
+            
+            # 调整图像尺寸以符合模型要求 (确保尺寸是64的倍数)
+            width, height = image.size
+            new_width = ((width + 63) // 64) * 64
+            new_height = ((height + 63) // 64) * 64
+            
+            if new_width != width or new_height != height:
+                image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                logger.debug(f"图像尺寸调整: {width}x{height} -> {new_width}x{new_height}")
             
             # 处理图像
             if task_type == "watermark":
