@@ -8,7 +8,7 @@ FLUX Kontext 批量图像处理脚本
 import torch
 import numpy as np
 from PIL import Image
-from diffusers import FluxKontextPipeline
+from diffusers import FluxControlPipeline
 import argparse
 import os
 import sys
@@ -37,7 +37,7 @@ def init_model():
     logger.info("正在加载 FLUX Kontext 模型...")
     
     try:
-        pipeline = FluxKontextPipeline.from_pretrained(
+        pipeline = FluxControlPipeline.from_pretrained(
             "mit-han-lab/nunchaku-flux.1-kontext-dev",  # INT4量化模型
             torch_dtype=torch.float16,                   # A10兼容FP16
             variant="int4_r32",                           # 量化配置
@@ -61,7 +61,7 @@ def init_model():
         # 尝试加载标准版本
         logger.info("尝试加载标准版本...")
         try:
-            pipeline = FluxKontextPipeline.from_pretrained(
+            pipeline = FluxControlPipeline.from_pretrained(
                 "black-forest-labs/FLUX.1-Kontext-dev",
                 torch_dtype=torch.float16,
                 device_map="auto"
