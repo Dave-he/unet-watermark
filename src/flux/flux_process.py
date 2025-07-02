@@ -301,9 +301,9 @@ def main():
     parser = argparse.ArgumentParser(description="FLUX Kontext 批量图像处理工具")
     
     # 基本参数
-    parser.add_argument("--input", "-i", required=True, help="输入图像目录")
-    parser.add_argument("--output", "-o", required=True, help="输出图像目录")
-    parser.add_argument("--prompt", "-p", default="Remove watermark", help="处理提示词")
+    parser.add_argument("--input", "-i", default='data/test', help="输入图像目录")
+    parser.add_argument("--output", "-o", default='data/res', help="输出图像目录")
+    parser.add_argument("--prompt", "-p", default="Remove the watermark、logo、Nameplate、label、emblem from the image", help="处理提示词")
     
     # 处理选项
     parser.add_argument("--limit", "-l", type=int, help="限制处理图像数量")
