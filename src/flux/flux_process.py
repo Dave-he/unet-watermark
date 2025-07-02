@@ -242,7 +242,7 @@ def process_batch(input_dir: str, output_dir: str, prompt: str = "Remove waterma
                 processed_image = edit_image(image, prompt)
             
             # 保存处理后的图像
-            output_filename = f"{Path(image_path).stem}_processed{Path(image_path).suffix}"
+            output_filename = f"{Path(image_path).stem}{Path(image_path).suffix}"
             output_path = os.path.join(output_dir, output_filename)
             processed_image.save(output_path, quality=95)
             
