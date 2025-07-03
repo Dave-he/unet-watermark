@@ -49,7 +49,7 @@ def init_model(model_path: Optional[str] = None):
         pipeline = FluxKontextPipeline.from_pretrained(
             model_name_or_path,
             torch_dtype=torch.bfloat16,
-            device_map="auto"  # 自动设备映射
+            device_map="balanced"  # 自动设备映射
         )
         
         model = pipeline
