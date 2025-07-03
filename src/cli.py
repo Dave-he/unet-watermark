@@ -170,7 +170,7 @@ def repair_command(args):
     # 新的批量处理模式不需要limit参数
     if getattr(args, 'use_ocr', False):
         print(f"启用OCR文字检测: 是 (语言: {', '.join(args.ocr_languages)})")
-    if getattr(args, 'generate_video', False):
+    if getattr(args, 'video', False):
         print(f"生成对比视频: 是 ({args.video_width}x{args.video_height}, {args.fps}fps, {args.duration}s/图)")
     print()
     
@@ -233,7 +233,7 @@ def repair_command(args):
         print(f"\n结果摘要已保存: {summary_path}")
         
         # 检查是否需要生成视频
-        if getattr(args, 'gen_video', False):
+        if getattr(args, 'video', False):
             print("\n开始生成对比视频...")
             try:
                 from scripts.video_generator import VideoGenerator
@@ -245,7 +245,7 @@ def repair_command(args):
                 
                 # 创建视频生成器
                 generator = VideoGenerator(
-                    input_dir=args.input,
+                    input_dir=args.video_input,
                     repair_dir=args.output,  # 使用最终修复结果
                     output_dir=args.output,
                     mask_dir=mask_dir,
@@ -441,7 +441,8 @@ def main():
     repair_parser.add_argument('--sd-max-area-ratio', type=float, default=0.08, help='SD最大区域比例 (默认: 0.08)')
     
     # 添加视频生成参数
-    repair_parser.add_argument('--gen-video', action='store_true', help='修复完成后自动生成对比视频')
+    repair_parser.add_argument('--video', action='store_true', help='修复完成后自动生成对比视频')
+    repair_parser.add_argument('--video-input',default='data/test', help='video对比目录')
     repair_parser.add_argument('--video-width', type=int, default=1920, help='视频宽度 (默认: 1920)')
     repair_parser.add_argument('--video-height', type=int, default=1080, help='视频高度 (默认: 1080)')
     repair_parser.add_argument('--duration', type=float, default=2.0, help='每张图片展示时长(秒) (默认: 2.0)')

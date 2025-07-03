@@ -5,7 +5,7 @@
 ## 安装依赖
 ```bash
 #venv
-virtualenv env -p 3.13
+virtualenv env -p 3.12
 source env/bin/activate #linux
 ./env/scripts/activate.ps1 #windows 
 
