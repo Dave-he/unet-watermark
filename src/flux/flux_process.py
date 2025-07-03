@@ -30,17 +30,25 @@ logger = logging.getLogger(__name__)
 model = None
 
 # ===== 1. 环境初始化与模型加载 =====
-def init_model():
+def init_model(model_path: Optional[str] = None):
     """加载4位量化版 Flux-Kontext 模型，启用 Nunchaku 加速"""
     global model
     
     logger.info("正在加载 FLUX Kontext 模型...")
     
+    # 确定模型路径
+    if model_path and os.path.exists(model_path):
+        logger.info(f"使用本地模型: {model_path}")
+        model_name_or_path = model_path
+    else:
+        logger.info("使用在线模型: mit-han-lab/nunchaku-flux.1-kontext-dev")
+        model_name_or_path = "mit-han-lab/nunchaku-flux.1-kontext-dev"
+    
     try:
         pipeline = FluxKontextPipeline.from_pretrained(
-            "mit-han-lab/nunchaku-flux.1-kontext-dev",  # INT4量化模型
+            model_name_or_path,                          # 支持本地路径或在线模型
             torch_dtype=torch.bfloat16,                  # 推荐使用bfloat16
-            variant="int4_r32",                           # 量化配置
+            variant="int4_r32" if not model_path else None,  # 本地模型可能不需要variant
             device_map="balanced"                         # 使用 balanced 策略
         )
         
@@ -61,8 +69,10 @@ def init_model():
         # 尝试加载标准版本
         logger.info("尝试加载标准版本...")
         try:
+            # 如果有本地路径，优先使用本地路径，否则使用在线模型
+            fallback_model = model_name_or_path if model_path else "black-forest-labs/FLUX.1-Kontext-dev"
             pipeline = FluxKontextPipeline.from_pretrained(
-                "black-forest-labs/FLUX.1-Kontext-dev",
+                fallback_model,
                 torch_dtype=torch.bfloat16,
                 device_map="balanced"  # 使用 balanced 策略
             )
@@ -74,11 +84,12 @@ def init_model():
             # 最后尝试不使用 device_map
             logger.info("尝试不使用 device_map...")
             try:
+                fallback_model = model_name_or_path if model_path else "black-forest-labs/FLUX.1-Kontext-dev"
                 pipeline = FluxKontextPipeline.from_pretrained(
-                "black-forest-labs/FLUX.1-Kontext-dev",
-                torch_dtype=torch.bfloat16
-            )
-                pipeline.to("cuda")
+                    fallback_model,
+                    torch_dtype=torch.bfloat16
+                )
+                pipeline.to("cpu")
                 model = pipeline
                 logger.info("简化版本模型加载完成")
                 return pipeline
@@ -95,12 +106,15 @@ def remove_watermark(image: Image.Image, prompt: str = "Remove watermark") -> Im
         raise ValueError("模型未初始化，请先调用 init_model()")
     
     try:
+        # 自动检测设备类型
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        
         output = model(
             image=image,
             prompt=f"{prompt} | Keep original details, remove watermark only",
             guidance_scale=2.5,                # 控制编辑强度
             num_inference_steps=20,             # 加速推理步数
-            generator=torch.Generator(device="cuda").manual_seed(42)
+            generator=torch.Generator(device=device).manual_seed(42)
         ).images[0]
         return output
     except Exception as e:
@@ -108,19 +122,22 @@ def remove_watermark(image: Image.Image, prompt: str = "Remove watermark") -> Im
         raise e
 
 def edit_image(image: Image.Image, prompt: str) -> Image.Image:
-    """通用图像编辑功能"""
+    """通用图像编辑功能"""  
     global model
     
     if model is None:
         raise ValueError("模型未初始化，请先调用 init_model()")
     
     try:
+        # 自动检测设备类型
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        
         output = model(
             image=image,
             prompt=prompt,
             guidance_scale=3.0,                # 编辑任务使用稍高的引导强度
             num_inference_steps=25,             # 编辑任务使用更多步数
-            generator=torch.Generator(device="cuda").manual_seed(42)
+            generator=torch.Generator(device=device).manual_seed(42)
         ).images[0]
         return output
     except Exception as e:
@@ -151,7 +168,7 @@ def get_image_files(input_dir: str, limit: Optional[int] = None, random_select: 
 
 def process_batch(input_dir: str, output_dir: str, prompt: str = "Remove watermark", 
                  limit: Optional[int] = None, random_select: bool = False, 
-                 task_type: str = "watermark") -> List[tuple]:
+                 task_type: str = "watermark", model_path: Optional[str] = None) -> List[tuple]:
     """批量处理图像"""
     # 创建输出目录
     os.makedirs(output_dir, exist_ok=True)
@@ -165,7 +182,7 @@ def process_batch(input_dir: str, output_dir: str, prompt: str = "Remove waterma
     
     # 初始化模型
     if model is None:
-        init_model()
+        init_model(model_path)
     
     processed_pairs = []
     failed_count = 0
@@ -304,6 +321,7 @@ def main():
     parser.add_argument("--input", "-i", default='data/test', help="输入图像目录")
     parser.add_argument("--output", "-o", default='data/res', help="输出图像目录")
     parser.add_argument("--prompt", "-p", default="Remove the watermark、logo、Nameplate、label、car logo from the image", help="处理提示词")
+    parser.add_argument("--model-path", "-m", help="本地FLUX模型目录路径 (可选，不指定则使用在线模型)")
     
     # 处理选项
     parser.add_argument("--limit", "-l", type=int, help="限制处理图像数量")
@@ -350,7 +368,8 @@ def main():
             prompt=args.prompt,
             limit=args.limit,
             random_select=args.random,
-            task_type=args.task
+            task_type=args.task,
+            model_path=args.model_path
         )
         
         if not processed_pairs:
