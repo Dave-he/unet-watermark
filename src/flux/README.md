@@ -17,7 +17,7 @@
 pip install torch torchvision transformers accelerate
 
 pip install git+https://github.com/huggingface/diffusers.git
-pip install protobuf
+pip install protobuf sentencepiece
 pip install pillow opencv-python moviepy tqdm
 ```
 

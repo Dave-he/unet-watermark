@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-FLUX Kontext 简化版批量图像处理脚本
-直接加载标准版本模型，简化配置
+FLUX Kontext 批量图像处理脚本
+支持水印去除、图像编辑等功能
 """
 
 import torch
@@ -29,9 +29,9 @@ logger = logging.getLogger(__name__)
 # 全局模型变量
 model = None
 
-# ===== 1. 简化模型加载 =====
+# ===== 1. 环境初始化与模型加载 =====
 def init_model(model_path: Optional[str] = None):
-    """简化版模型加载，直接使用标准FLUX模型"""
+    """加载4位量化版 Flux-Kontext 模型，启用 Nunchaku 加速"""
     global model
     
     logger.info("正在加载 FLUX Kontext 模型...")
@@ -41,16 +41,24 @@ def init_model(model_path: Optional[str] = None):
         logger.info(f"使用本地模型: {model_path}")
         model_name_or_path = model_path
     else:
-        logger.info("使用标准在线模型: black-forest-labs/FLUX.1-Kontext-dev")
-        model_name_or_path = "black-forest-labs/FLUX.1-Kontext-dev"
+        logger.info("使用在线模型: mit-han-lab/nunchaku-flux.1-kontext-dev")
+        model_name_or_path = "mit-han-lab/nunchaku-flux.1-kontext-dev"
     
     try:
-        # 直接加载标准版本，使用简化配置
         pipeline = FluxKontextPipeline.from_pretrained(
-            model_name_or_path,
-            torch_dtype=torch.bfloat16,
-            device_map="auto"  # 自动设备映射
+            model_name_or_path,                          # 支持本地路径或在线模型
+            torch_dtype=torch.bfloat16,                  # 推荐使用bfloat16
+            variant="int4_r32" if not model_path else None,  # 本地模型可能不需要variant
+            device_map="balanced"                         # 使用 balanced 策略
         )
+        
+        # 启用硬件加速优化
+        if hasattr(pipeline, 'enable_nunchaku_optimizations'):
+            pipeline.enable_nunchaku_optimizations(
+                attention_mode="nunchaku-fp16",    # A10适配模式
+                use_cpu_offload=True,               # 显存<18GB时启用CPU卸载
+                cache_threshold=0.12                # 首层特征缓存平衡点
+            )
         
         model = pipeline
         logger.info("模型加载完成")
@@ -58,11 +66,40 @@ def init_model(model_path: Optional[str] = None):
         
     except Exception as e:
         logger.error(f"模型加载失败: {str(e)}")
-        raise e
+        # 尝试加载标准版本
+        logger.info("尝试加载标准版本...")
+        try:
+            # 如果有本地路径，优先使用本地路径，否则使用在线模型
+            fallback_model = model_name_or_path if model_path else "black-forest-labs/FLUX.1-Kontext-dev"
+            pipeline = FluxKontextPipeline.from_pretrained(
+                fallback_model,
+                torch_dtype=torch.bfloat16,
+                device_map="balanced"  # 使用 balanced 策略
+            )
+            model = pipeline
+            logger.info("标准版本模型加载完成")
+            return pipeline
+        except Exception as e2:
+            logger.error(f"标准版本加载也失败: {str(e2)}")
+            # 最后尝试不使用 device_map
+            logger.info("尝试不使用 device_map...")
+            try:
+                fallback_model = model_name_or_path if model_path else "black-forest-labs/FLUX.1-Kontext-dev"
+                pipeline = FluxKontextPipeline.from_pretrained(
+                    fallback_model,
+                    torch_dtype=torch.bfloat16
+                )
+                pipeline.to("cpu")
+                model = pipeline
+                logger.info("简化版本模型加载完成")
+                return pipeline
+            except Exception as e3:
+                logger.error(f"所有模型加载方式都失败: {str(e3)}")
+                raise e3
 
 # ===== 2. 核心推理函数 =====
 def remove_watermark(image: Image.Image, prompt: str = "Remove watermark") -> Image.Image:
-    """图像水印擦除"""
+    """图像水印擦除（优化参数配置）"""
     global model
     
     if model is None:
@@ -75,8 +112,8 @@ def remove_watermark(image: Image.Image, prompt: str = "Remove watermark") -> Im
         output = model(
             image=image,
             prompt=f"{prompt} | Keep original details, remove watermark only",
-            guidance_scale=2.5,
-            num_inference_steps=20,
+            guidance_scale=2.5,                # 控制编辑强度
+            num_inference_steps=20,             # 加速推理步数
             generator=torch.Generator(device=device).manual_seed(42)
         ).images[0]
         return output
@@ -98,8 +135,8 @@ def edit_image(image: Image.Image, prompt: str) -> Image.Image:
         output = model(
             image=image,
             prompt=prompt,
-            guidance_scale=3.0,
-            num_inference_steps=25,
+            guidance_scale=3.0,                # 编辑任务使用稍高的引导强度
+            num_inference_steps=25,             # 编辑任务使用更多步数
             generator=torch.Generator(device=device).manual_seed(42)
         ).images[0]
         return output
@@ -107,45 +144,7 @@ def edit_image(image: Image.Image, prompt: str) -> Image.Image:
         logger.error(f"图像编辑失败: {str(e)}")
         raise e
 
-# ===== 3. 简化图像尺寸处理 =====
-def resize_image_for_flux(image: Image.Image) -> Image.Image:
-    """简化的图像尺寸调整"""
-    width, height = image.size
-    
-    # 简单的尺寸调整逻辑
-    max_size = 1024
-    min_size = 512
-    
-    # 如果图像太大，按比例缩小
-    if max(width, height) > max_size:
-        if width > height:
-            new_width = max_size
-            new_height = int(height * max_size / width)
-        else:
-            new_height = max_size
-            new_width = int(width * max_size / height)
-    # 如果图像太小，按比例放大
-    elif max(width, height) < min_size:
-        if width > height:
-            new_width = min_size
-            new_height = int(height * min_size / width)
-        else:
-            new_height = min_size
-            new_width = int(width * min_size / height)
-    else:
-        new_width, new_height = width, height
-    
-    # 确保尺寸是8的倍数
-    new_width = ((new_width + 7) // 8) * 8
-    new_height = ((new_height + 7) // 8) * 8
-    
-    if new_width != width or new_height != height:
-        image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
-        logger.debug(f"图像尺寸调整: {width}x{height} -> {new_width}x{new_height}")
-    
-    return image
-
-# ===== 4. 批量处理功能 =====
+# ===== 3. 批量处理功能 =====
 def get_image_files(input_dir: str, limit: Optional[int] = None, random_select: bool = False) -> List[str]:
     """获取图像文件列表"""
     supported_formats = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.webp'}
@@ -199,7 +198,59 @@ def process_batch(input_dir: str, output_dir: str, prompt: str = "Remove waterma
             
             # 加载图像并调整尺寸
             image = Image.open(image_path).convert('RGB')
-            image = resize_image_for_flux(image)
+            
+            # 调整图像尺寸以符合FLUX Kontext模型要求
+            width, height = image.size
+            
+            # FLUX Kontext推荐使用标准尺寸，避免张量形状问题
+            # 根据官方文档，常用尺寸包括768x768, 1024x1024等
+            def get_optimal_size(w, h):
+                # 计算最接近的8的倍数尺寸
+                def round_to_multiple(x, multiple=8):
+                    return ((x + multiple - 1) // multiple) * multiple
+                
+                # 保持宽高比，调整到合适范围
+                aspect_ratio = w / h
+                
+                # 目标尺寸范围：512-1024
+                if max(w, h) < 512:
+                    # 小图放大到512
+                    if w > h:
+                        new_w = 512
+                        new_h = round_to_multiple(int(512 / aspect_ratio))
+                    else:
+                        new_h = 512
+                        new_w = round_to_multiple(int(512 * aspect_ratio))
+                elif max(w, h) > 1024:
+                    # 大图缩小到1024
+                    if w > h:
+                        new_w = 1024
+                        new_h = round_to_multiple(int(1024 / aspect_ratio))
+                    else:
+                        new_h = 1024
+                        new_w = round_to_multiple(int(1024 * aspect_ratio))
+                else:
+                    # 中等尺寸，调整到8的倍数
+                    new_w = round_to_multiple(w)
+                    new_h = round_to_multiple(h)
+                
+                # 确保最小尺寸
+                new_w = max(new_w, 512)
+                new_h = max(new_h, 512)
+                
+                return new_w, new_h
+            
+            new_width, new_height = get_optimal_size(width, height)
+            
+            if new_width != width or new_height != height:
+                image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                logger.debug(f"图像尺寸调整: {width}x{height} -> {new_width}x{new_height}")
+            
+            # 验证最终尺寸
+            final_width, final_height = image.size
+            if final_width % 8 != 0 or final_height % 8 != 0:
+                logger.warning(f"图像尺寸不符合要求: {final_width}x{final_height}，跳过处理")
+                continue
             
             # 处理图像
             if task_type == "watermark":
@@ -227,7 +278,7 @@ def process_batch(input_dir: str, output_dir: str, prompt: str = "Remove waterma
     logger.info(f"批量处理完成: 成功 {len(processed_pairs)} 张, 失败 {failed_count} 张")
     return processed_pairs
 
-# ===== 5. 视频生成功能 =====
+# ===== 4. 视频生成功能 =====
 def generate_comparison_video(input_dir: str, output_dir: str, video_output_dir: str,
                             video_type: str = "sidebyside", duration: float = 2.0, 
                             fps: int = 30, resolution: tuple = (1280, 720)):
@@ -262,9 +313,9 @@ def generate_comparison_video(input_dir: str, output_dir: str, video_output_dir:
         logger.error(f"视频生成失败: {str(e)}")
         return None
 
-# ===== 6. 命令行接口 =====
+# ===== 5. 命令行接口 =====
 def main():
-    parser = argparse.ArgumentParser(description="FLUX Kontext 简化版批量图像处理工具")
+    parser = argparse.ArgumentParser(description="FLUX Kontext 批量图像处理工具")
     
     # 基本参数
     parser.add_argument("--input", "-i", default='data/test', help="输入图像目录")
