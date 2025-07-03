@@ -122,18 +122,18 @@ python main.py repair
 python main.py repair --input data/train/watermarked --output data/result \
   --model models/unet_watermark.pth \
   --iopaint-model lama \
-  --limit 100 --generate-video
+  --limit 100 --video
 
 
 # 结合其他功能使用
 python main.py repair --config src/configs/unet_watermark.yaml \
- --input data/test --output data/results --use-ocr --generate-video
+ --input data/test --output data/results --use-ocr --video
 
 
 python main.py repair --input data/test --output data/result \
   --model /Volumes/192.168.0.41/AI/unet-model/unet_watermark.pth \
   --iopaint-model lama \
-  --limit 100 --generate-video
+  --limit 100 --video
 ```
 
 ## 3. 评估
@@ -165,7 +165,7 @@ python src/scripts/video_generator.py -i data/original -r data/repaired -o video
 
 # flux
 ```bash 
- python src/flux/flux_process.py --input data/test/ --output data/res --limit 10 --video
+python src/flux/flux_process.py --input data/test/ --output data/res --limit 10 --video
  
  ```
 
