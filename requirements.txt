@@ -10,6 +10,8 @@ accelerate>=0.24.0
 
 safetensors>=0.4.0
 huggingface-hub>=0.17.0
+protobuf
+sentencepiece
 
 # 图像分割模型库
 segmentation-models-pytorch>=0.3.0
