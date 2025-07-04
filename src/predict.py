@@ -1225,7 +1225,7 @@ class WatermarkPredictor:
                 step4_results = step2_results
                 step3_results = []  # 设置为空列表以便后续合并mask使用
             
-        # 步骤5: 合并水印mask和文字mask，生成最终mask用于视频参考
+            # 步骤5: 合并水印mask和文字mask，生成最终mask用于视频参考
             if merge_masks and step1_results and use_unet:
                 merged_mask_folder = os.path.join(output_folder, "masks")
                 merged_results = self.merge_masks_for_video(
