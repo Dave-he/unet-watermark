@@ -145,8 +145,8 @@ def edit_image(image: Image.Image, prompt: str) -> Image.Image:
         raise e
 
 # ===== 3. 批量处理功能 =====
-def get_image_files(input_dir: str, limit: Optional[int] = None, random_select: bool = False) -> List[str]:
-    """获取图像文件列表"""
+def get_image_files(input_dir: str, output_dir: str = None, limit: Optional[int] = None, random_select: bool = False) -> List[str]:
+    """获取图像文件列表，跳过已处理的文件"""
     supported_formats = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.webp'}
     
     image_files = []
@@ -156,13 +156,29 @@ def get_image_files(input_dir: str, limit: Optional[int] = None, random_select: 
     
     logger.info(f"找到 {len(image_files)} 张图片")
     
+    # 如果指定了输出目录，过滤掉已处理的文件
+    if output_dir and os.path.exists(output_dir):
+        unprocessed_files = []
+        for image_path in image_files:
+            filename = Path(image_path).name
+            output_path = os.path.join(output_dir, filename)
+            if not os.path.exists(output_path):
+                unprocessed_files.append(image_path)
+        
+        processed_count = len(image_files) - len(unprocessed_files)
+        if processed_count > 0:
+            logger.info(f"跳过 {processed_count} 张已处理的图片")
+        
+        image_files = unprocessed_files
+        logger.info(f"剩余 {len(image_files)} 张未处理的图片")
+    
     # 随机选择
     if random_select and limit and len(image_files) > limit:
         image_files = random.sample(image_files, limit)
-        logger.info(f"随机选择了 {len(image_files)} 张图片")
+        logger.info(f"从未处理的图片中随机选择了 {len(image_files)} 张")
     elif limit and len(image_files) > limit:
         image_files = image_files[:limit]
-        logger.info(f"选择前 {len(image_files)} 张图片")
+        logger.info(f"选择前 {len(image_files)} 张未处理的图片")
     
     return image_files
 
@@ -174,7 +190,7 @@ def process_batch(input_dir: str, output_dir: str, prompt: str = "Remove waterma
     os.makedirs(output_dir, exist_ok=True)
     
     # 获取图像文件
-    image_files = get_image_files(input_dir, limit, random_select)
+    image_files = get_image_files(input_dir, output_dir, limit, random_select)
     
     if not image_files:
         logger.warning("未找到任何图像文件")

@@ -111,11 +111,12 @@ class WatermarkPredictor:
             logger.info(f"验证F1: {val_metrics.get('f1', 'Unknown')}")
         logger.info("=" * 50)
     
-    def _get_image_files(self, input_folder, limit=None):
-        """获取文件夹中的所有图像文件
+    def _get_image_files(self, input_folder, output_folder=None, limit=None):
+        """获取文件夹中的所有图像文件，跳过已处理的文件
         
         Args:
             input_folder: 输入文件夹路径
+            output_folder: 输出文件夹路径，用于检查已处理的文件
             limit: 限制处理的图片数量，如果为None则处理所有图片
         
         Returns:
@@ -130,13 +131,31 @@ class WatermarkPredictor:
             image_files.extend(glob.glob(os.path.join(input_folder, ext.upper())))
         
         image_files = sorted(list(set(image_files)))  # 去重并排序
+        logger.info(f"找到 {len(image_files)} 张图片")
+        
+        # 如果指定了输出文件夹，过滤掉已处理的文件
+        if output_folder and os.path.exists(output_folder):
+            unprocessed_files = []
+            for image_path in image_files:
+                base_name = os.path.splitext(os.path.basename(image_path))[0]
+                # 检查mask文件是否存在
+                mask_path = os.path.join(output_folder, f"{base_name}_mask.png")
+                if not os.path.exists(mask_path):
+                    unprocessed_files.append(image_path)
+            
+            processed_count = len(image_files) - len(unprocessed_files)
+            if processed_count > 0:
+                logger.info(f"跳过 {processed_count} 张已处理的图片")
+            
+            image_files = unprocessed_files
+            logger.info(f"剩余 {len(image_files)} 张未处理的图片")
         
         # 如果指定了limit，随机选择指定数量的图片
         if limit is not None and limit > 0 and len(image_files) > limit:
             total_count = len(image_files)
             random.shuffle(image_files)
             image_files = image_files[:limit]
-            logger.info(f"随机选择了 {limit} 张图片进行处理（总共 {total_count} 张）")
+            logger.info(f"从未处理的图片中随机选择了 {limit} 张进行处理（总共 {total_count} 张）")
         
         return image_files    
     def _optimize_mask(self, mask, mask_type='watermark'):
@@ -553,10 +572,10 @@ class WatermarkPredictor:
         # 创建mask输出目录
         os.makedirs(mask_output_folder, exist_ok=True)
         
-        # 获取所有图像文件
-        image_files = self._get_image_files(input_folder, limit=limit)
+        # 获取所有图像文件，跳过已处理的文件
+        image_files = self._get_image_files(input_folder, mask_output_folder, limit=limit)
         if not image_files:
-            logger.warning(f"在 {input_folder} 中未找到图像文件")
+            logger.warning(f"在 {input_folder} 中未找到未处理的图像文件")
             return []
         
         logger.info(f"找到 {len(image_files)} 张图片")

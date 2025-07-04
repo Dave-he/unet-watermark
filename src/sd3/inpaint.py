@@ -394,13 +394,27 @@ class SDWatermarkRemover:
         
         print(f"找到 {len(image_files)} 个图像文件")
         
+        # 过滤掉已处理的文件
+        unprocessed_files = []
+        for img_file in image_files:
+            output_file = output_path / f"cleaned_{img_file.name}"
+            if not output_file.exists():
+                unprocessed_files.append(img_file)
+        
+        processed_count = len(image_files) - len(unprocessed_files)
+        if processed_count > 0:
+            print(f"跳过 {processed_count} 个已处理的图像")
+        
+        image_files = unprocessed_files
+        print(f"剩余 {len(image_files)} 个未处理的图像")
+        
         # 如果设置了 limit 参数，随机选择指定数量的图像
         if limit is not None and limit > 0:
             if limit < len(image_files):
                 image_files = random.sample(image_files, limit)
-                print(f"随机选择了 {len(image_files)} 个图像进行处理")
+                print(f"从未处理的图像中随机选择了 {len(image_files)} 个进行处理")
             else:
-                print(f"limit 参数 ({limit}) 大于等于总图像数量，将处理所有图像")
+                print(f"limit 参数 ({limit}) 大于等于未处理图像数量，将处理所有未处理图像")
         
         # 处理每个图像
         success_count = 0

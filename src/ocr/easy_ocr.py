@@ -246,12 +246,27 @@ class EasyOCRDetector:
         if self.verbose:
             print(f"找到 {len(image_files)} 张图片")
         
+        # 过滤掉已处理的文件
+        unprocessed_files = []
+        for image_file in image_files:
+            output_file = output_path / f"{image_file.stem}{image_file.suffix}"
+            if not output_file.exists():
+                unprocessed_files.append(image_file)
+        
+        processed_count = len(image_files) - len(unprocessed_files)
+        if processed_count > 0 and self.verbose:
+            print(f"跳过 {processed_count} 张已处理的图片")
+        
+        image_files = unprocessed_files
+        if self.verbose:
+            print(f"剩余 {len(image_files)} 张未处理的图片")
+        
         # 随机选取指定数量的图片
         if limit and limit < len(image_files):
             random.seed(random_seed)
             image_files = random.sample(image_files, limit)
             if self.verbose:
-                print(f"随机选取 {limit} 张图片进行处理")
+                print(f"从未处理的图片中随机选取 {limit} 张进行处理")
         
         # 批量处理
         success_count = 0
