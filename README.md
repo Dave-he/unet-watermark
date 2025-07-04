@@ -135,7 +135,7 @@ python main.py repair --input data/test --output data/result \
   --iopaint-model lama \
   --limit 100 --video
 
-python main.py repair --limit 100 --no-unet --use-ocr --video --input data/res
+python main.py repair --limit 100 --no-unet --use-ocr --video --input data/res --steps 1
 ```
 
 ## 3. 评估
