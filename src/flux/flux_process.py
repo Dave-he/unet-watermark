@@ -269,7 +269,7 @@ def main():
     # 基本参数
     parser.add_argument("--input", "-i", default='data/test', help="输入图像目录")
     parser.add_argument("--output", "-o", default='data/res', help="输出图像目录")
-    parser.add_argument("--prompt", "-p", default="Remove the watermark、logo、Nameplate、label、car logo from the image", help="处理提示词")
+    parser.add_argument("--prompt", "-p", default="Remove the watermark,text,Nameplate,label,car-logo from the image", help="处理提示词")
     parser.add_argument("--model-path", "-m", help="本地FLUX模型目录路径 (可选，不指定则使用在线模型)")
     
     # 处理选项
