@@ -938,6 +938,12 @@ class WatermarkPredictor:
                 # 计算文字区域像素数
                 text_pixels = np.sum(text_mask > 0)
                 
+                # 检查mask是否全黑（没有检测到文字区域）
+                if text_pixels == 0:
+                    base_name = os.path.splitext(os.path.basename(file_info['original_path']))[0]
+                    logger.info(f"OCR未检测到文字区域，跳过修复: {base_name}")
+                    continue
+                
                 successful_files.append({
                     'image_path': image_path,
                     'original_path': file_info['original_path'],
@@ -952,7 +958,11 @@ class WatermarkPredictor:
                 logger.error(f"OCR处理错误: {file_info['image_path']} - {str(e)}")
                 continue
         
-        logger.info(f"步骤3完成: 成功处理 {len(successful_files)} 张图片")
+        # 统计跳过的图片数量
+        total_processed = len(processed_files)
+        skipped_count = total_processed - len(successful_files)
+        
+        logger.info(f"步骤3完成: 检测到文字的图片 {len(successful_files)} 张，跳过无文字图片 {skipped_count} 张")
         return successful_files
     
     def step4_batch_iopaint_text_repair(self, processed_files, final_output_folder, model_name='lama', timeout=600, steps=1):
@@ -1176,7 +1186,7 @@ class WatermarkPredictor:
                     step2_results, text_mask_folder, ocr_languages, ocr_engine
                 )
                 if not step3_results:
-                    logger.warning("步骤3失败：OCR处理失败，跳过文字修复")
+                    logger.warning("步骤3失败：OCR处理失败或所有图片均未检测到文字，跳过文字修复")
                     # 直接复制步骤2的结果到最终输出
                     for file_info in step2_results:
                         base_name = os.path.splitext(os.path.basename(file_info['original_path']))[0]
@@ -1185,9 +1195,26 @@ class WatermarkPredictor:
                     step4_results = step2_results
                     step3_results = []  # 设置为空列表以便后续合并mask使用
                 else:
+                    # 对有文字的图片进行修复
                     step4_results = self.step4_batch_iopaint_text_repair(
                         step3_results, final_folder, text_model, timeout, steps
                     )
+                    
+                    # 对于没有检测到文字的图片，直接复制step2的结果到最终输出
+                    step3_processed_paths = {info['original_path'] for info in step3_results}
+                    for file_info in step2_results:
+                        if file_info['original_path'] not in step3_processed_paths:
+                            base_name = os.path.splitext(os.path.basename(file_info['original_path']))[0]
+                            final_path = os.path.join(final_folder, f"{base_name}.png")
+                            shutil.copy2(file_info['image_path'], final_path)
+                            logger.info(f"未检测到文字，直接复制: {base_name}")
+                            # 添加到step4_results中以便统计
+                            step4_results.append({
+                                'original_path': file_info['original_path'],
+                                'final_path': final_path,
+                                'watermark_ratio': file_info.get('watermark_ratio', 0.0),
+                                'text_pixels': 0
+                            })
             else:
                 logger.info("跳过OCR和文字修复步骤")
                 # 直接复制步骤2的结果到最终输出
