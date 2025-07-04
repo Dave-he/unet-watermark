@@ -134,6 +134,8 @@ python main.py repair --input data/test --output data/result \
   --model /Volumes/192.168.0.41/AI/unet-model/unet_watermark.pth \
   --iopaint-model lama \
   --limit 100 --video
+
+python main.py repair --limit 100 --no-unet --use-ocr --video --input data/res
 ```
 
 ## 3. 评估
