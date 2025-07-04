@@ -638,6 +638,12 @@ class WatermarkPredictor:
                 watermark_pixels = np.sum(mask_optimized > 0)
                 watermark_ratio = watermark_pixels / total_pixels
                 
+                # 检查mask是否全黑（没有检测到水印区域）
+                if watermark_pixels == 0:
+                    base_name = os.path.splitext(os.path.basename(image_path))[0]
+                    logger.info(f"UNet未检测到水印区域，跳过处理: {base_name}")
+                    continue
+                
                 processed_files.append({
                     'image_path': image_path,
                     'mask_path': mask_path,
@@ -650,7 +656,11 @@ class WatermarkPredictor:
                 logger.error(f"处理图像失败 {image_path}: {str(e)}")
                 continue
         
-        logger.info(f"步骤1完成: 成功处理 {len(processed_files)} 张图片")
+        # 统计跳过的图片数量
+        total_processed = len(image_files)
+        skipped_count = total_processed - len(processed_files)
+        
+        logger.info(f"步骤1完成: 检测到水印的图片 {len(processed_files)} 张，跳过无水印图片 {skipped_count} 张")
         return processed_files
     
     def _batch_iopaint_repair(self, processed_files, output_folder, mask_key, model_name='lama', timeout=300, skip_condition=None, skip_threshold=None, steps=1):
@@ -1144,14 +1154,39 @@ class WatermarkPredictor:
                 # 步骤1: 批量预测水印mask
                 step1_results = self.step1_batch_predict_watermark_masks(input_folder, mask_folder, limit=limit)
                 if not step1_results:
-                    return {'status': 'error', 'message': '步骤1失败：未找到图像文件或处理失败'}
-                
-                # 步骤2: 批量修复水印
-                step2_results = self.step2_batch_iopaint_watermark_repair(
-                    step1_results, step2_folder, watermark_model, timeout, steps
-                )
-                if not step2_results:
-                    return {'status': 'error', 'message': '步骤2失败：水印修复失败'}
+                    logger.warning("步骤1：所有图片均未检测到水印，跳过水印修复")
+                    # 直接获取输入图像文件列表，跳过UNet处理
+                    image_files = self._get_image_files(input_folder, limit=limit)
+                    if not image_files:
+                        return {'status': 'error', 'message': '未找到图像文件'}
+                    
+                    # 创建step1_results和step2_results的模拟结果，用于后续处理
+                    step1_results = []
+                    step2_results = []
+                    for image_path in image_files:
+                        base_name = os.path.splitext(os.path.basename(image_path))[0]
+                        # 直接复制原图到step2文件夹
+                        os.makedirs(step2_folder, exist_ok=True)
+                        step2_path = os.path.join(step2_folder, f"{base_name}.png")
+                        shutil.copy2(image_path, step2_path)
+                        
+                        step1_results.append({
+                            'original_path': image_path,
+                            'mask_path': None,  # 没有mask
+                            'watermark_ratio': 0.0  # 没有检测到水印
+                        })
+                        step2_results.append({
+                            'original_path': image_path,
+                            'image_path': step2_path,
+                            'watermark_ratio': 0.0  # 没有检测到水印
+                        })
+                else:
+                    # 步骤2: 批量修复水印
+                    step2_results = self.step2_batch_iopaint_watermark_repair(
+                        step1_results, step2_folder, watermark_model, timeout, steps
+                    )
+                    if not step2_results:
+                        return {'status': 'error', 'message': '步骤2失败：水印修复失败'}
             else:
                 logger.info("跳过UNet水印检测和修复步骤")
                 # 直接获取输入图像文件列表，跳过UNet处理
