@@ -943,7 +943,7 @@ class WatermarkPredictor:
                     'original_path': file_info['original_path'],
                     'text_mask_path': text_mask_path,
                     'text_pixels': text_pixels,
-                    'watermark_ratio': file_info['watermark_ratio']
+                    'watermark_ratio': file_info.get('watermark_ratio', 0.0)
                 })
                 
                 progress_bar.set_postfix({'已处理': len(successful_files)})
@@ -978,7 +978,7 @@ class WatermarkPredictor:
             final_results.append({
                 'original_path': file_info['original_path'],
                 'final_path': file_info['image_path'],
-                'watermark_ratio': file_info['watermark_ratio'],
+                'watermark_ratio': file_info.get('watermark_ratio', 0.0),
                 'text_pixels': file_info.get('text_pixels', 0)
             })
         
@@ -1166,7 +1166,8 @@ class WatermarkPredictor:
                     })
                     step2_results.append({
                         'original_path': image_path,
-                        'image_path': step2_path
+                        'image_path': step2_path,
+                        'watermark_ratio': 0.0  # 没有检测到水印
                     })
             
             # 步骤3和4: OCR和文字修复（如果启用）
