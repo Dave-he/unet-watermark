@@ -1083,7 +1083,7 @@ class WatermarkPredictor:
      
     def process_folder_batch(self, input_folder, output_folder,
                             watermark_model='lama', text_model='lama',
-                            use_ocr=True, ocr_languages=None, ocr_engine='easy',
+                            use_unet=True, use_ocr=True, ocr_languages=None, ocr_engine='easy',
                             timeout=300, save_intermediate=True, merge_masks=True, limit=None, steps=3):
         """
         批量处理文件夹：分步骤对所有图片进行处理
@@ -1093,7 +1093,8 @@ class WatermarkPredictor:
             output_folder: 输出文件夹路径
             watermark_model: 水印修复模型
             text_model: 文字修复模型
-            use_ocr: 是否使用OCR
+            use_unet: 是否使用UNet模型进行水印检测和擦除
+            use_ocr: 是否使用OCR进行文字检测和擦除
             ocr_languages: OCR语言列表
             ocr_engine: OCR引擎
             timeout: 每步超时时间
@@ -1128,17 +1129,45 @@ class WatermarkPredictor:
             final_folder = output_folder
         
         try:
-            # 步骤1: 批量预测水印mask
-            step1_results = self.step1_batch_predict_watermark_masks(input_folder, mask_folder, limit=limit)
-            if not step1_results:
-                return {'status': 'error', 'message': '步骤1失败：未找到图像文件或处理失败'}
-            
-            # 步骤2: 批量修复水印
-            step2_results = self.step2_batch_iopaint_watermark_repair(
-                step1_results, step2_folder, watermark_model, timeout, steps
-            )
-            if not step2_results:
-                return {'status': 'error', 'message': '步骤2失败：水印修复失败'}
+            # 根据use_unet参数决定是否执行UNet水印检测和修复
+            if use_unet:
+                # 步骤1: 批量预测水印mask
+                step1_results = self.step1_batch_predict_watermark_masks(input_folder, mask_folder, limit=limit)
+                if not step1_results:
+                    return {'status': 'error', 'message': '步骤1失败：未找到图像文件或处理失败'}
+                
+                # 步骤2: 批量修复水印
+                step2_results = self.step2_batch_iopaint_watermark_repair(
+                    step1_results, step2_folder, watermark_model, timeout, steps
+                )
+                if not step2_results:
+                    return {'status': 'error', 'message': '步骤2失败：水印修复失败'}
+            else:
+                logger.info("跳过UNet水印检测和修复步骤")
+                # 直接获取输入图像文件列表，跳过UNet处理
+                image_files = self._get_image_files(input_folder, limit=limit)
+                if not image_files:
+                    return {'status': 'error', 'message': '未找到图像文件'}
+                
+                # 创建step1_results和step2_results的模拟结果，用于后续处理
+                step1_results = []
+                step2_results = []
+                for image_path in image_files:
+                    base_name = os.path.splitext(os.path.basename(image_path))[0]
+                    # 直接复制原图到step2文件夹
+                    os.makedirs(step2_folder, exist_ok=True)
+                    step2_path = os.path.join(step2_folder, f"{base_name}.png")
+                    shutil.copy2(image_path, step2_path)
+                    
+                    step1_results.append({
+                        'original_path': image_path,
+                        'mask_path': None,  # 没有mask
+                        'watermark_ratio': 0.0  # 没有检测到水印
+                    })
+                    step2_results.append({
+                        'original_path': image_path,
+                        'image_path': step2_path
+                    })
             
             # 步骤3和4: OCR和文字修复（如果启用）
             if use_ocr:
@@ -1169,13 +1198,15 @@ class WatermarkPredictor:
                 step3_results = []  # 设置为空列表以便后续合并mask使用
             
         # 步骤5: 合并水印mask和文字mask，生成最终mask用于视频参考
-            if merge_masks and step1_results:
+            if merge_masks and step1_results and use_unet:
                 merged_mask_folder = os.path.join(output_folder, "masks")
                 merged_results = self.merge_masks_for_video(
                     step1_results, step3_results, merged_mask_folder
                 )
             else:
                 merged_results = []
+                if not use_unet:
+                    logger.info("跳过mask合并步骤（未使用UNet检测）")
             
             # 计算统计信息
             end_time = time.time()
@@ -1187,7 +1218,7 @@ class WatermarkPredictor:
             # 计算平均水印面积比例
             avg_watermark_ratio = 0.0
             avg_text_pixels = 0.0
-            if step1_results:
+            if use_unet and step1_results:
                 avg_watermark_ratio = sum(f['watermark_ratio'] for f in step1_results) / len(step1_results)
             if use_ocr and 'step3_results' in locals() and step3_results:
                 avg_text_pixels = sum(f['text_pixels'] for f in step3_results) / len(step3_results)

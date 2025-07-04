@@ -167,9 +167,16 @@ def repair_command(args):
     print(f"水印修复模型: {watermark_model}")
     print(f"文字修复模型: {text_model}")
     print(f"处理超时时间: 300秒")
-    # 新的批量处理模式不需要limit参数
-    if getattr(args, 'use_ocr', False):
+    
+    # 处理流程控制参数
+    use_unet = getattr(args, 'use_unet', True) and not getattr(args, 'no_unet', False)
+    use_ocr = getattr(args, 'use_ocr', True) and not getattr(args, 'no_ocr', False)
+    
+    print(f"启用UNet水印检测: {'是' if use_unet else '否'}")
+    if use_ocr:
         print(f"启用OCR文字检测: 是 (语言: {', '.join(args.ocr_languages)})")
+    else:
+        print(f"启用OCR文字检测: 否")
     if getattr(args, 'video', False):
         print(f"生成对比视频: 是 ({args.video_width}x{args.video_height}, {args.fps}fps, {args.duration}s/图)")
     print()
@@ -194,7 +201,8 @@ def repair_command(args):
             output_folder=args.output,
             watermark_model=watermark_model,
             text_model=text_model,
-            use_ocr=getattr(args, 'use_ocr', False),
+            use_unet=use_unet,
+            use_ocr=use_ocr,
             ocr_languages=getattr(args, 'ocr_languages', ['en', 'ch_sim']),
             ocr_engine=getattr(args, 'ocr_engine', 'easy'),
             timeout=getattr(args, 'timeout', 300),
@@ -415,9 +423,15 @@ def main():
                               help='合并水印和文字mask用于视频生成 (默认: True)')
     repair_parser.add_argument('--limit', type=int, help='限制处理的图片数量，随机选择n张图片进行处理')
     
-    # 添加OCR文字掩码处理参数
-    repair_parser.add_argument('--use-ocr', action='store_true', default='true',
-                              help='启用OCR文字检测，将文字掩码与水印掩码合并')
+    # 添加流程控制参数
+    repair_parser.add_argument('--use-unet', action='store_true', default=True,
+                              help='启用UNet模型进行水印检测和擦除 (默认: True)')
+    repair_parser.add_argument('--no-unet', action='store_true',
+                              help='禁用UNet模型，跳过水印检测步骤')
+    repair_parser.add_argument('--use-ocr', action='store_true', default=True,
+                              help='启用OCR文字检测，将文字掩码与水印掩码合并 (默认: True)')
+    repair_parser.add_argument('--no-ocr', action='store_true',
+                              help='禁用OCR文字检测，跳过文字处理步骤')
     repair_parser.add_argument('--ocr-engine', type=str, choices=['paddle', 'easy'], default='easy',
                               help='选择OCR引擎: paddle (PaddleOCR) 或 easy (EasyOCR)')
     repair_parser.add_argument('--ocr-languages', type=str, nargs='+', default=['en', 'ch_sim'],
