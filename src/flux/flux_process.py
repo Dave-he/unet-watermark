@@ -285,7 +285,7 @@ def main():
     # 基本参数
     parser.add_argument("--input", "-i", default='data/test', help="输入图像目录")
     parser.add_argument("--output", "-o", default='data/res', help="输出图像目录")
-    parser.add_argument("--prompt", "-p", default="Remove watermarks, text, nameplates, labels from the image. Pay attention not to modify the details of the parts themselves, and do not lose small parts. Just remove the logo and watermark directly. If the parts have stickers, the labels can be removed, the silk screen can be retained", help="处理提示词")
+    parser.add_argument("--prompt", "-p", default="Remove watermarks, text, nameplates, labels from the image. Pay attention not to modify the details of the parts themselves, and do not lose small parts. Just remove the logo and watermark directly. If the parts have stickers, the labels can be removed, the silk screen can be retained.If the image contains a car, remove the car logo.", help="处理提示词")
     parser.add_argument("--model-path", "-m", help="本地FLUX模型目录路径 (可选，不指定则使用在线模型)")
     
     # 处理选项
@@ -308,7 +308,7 @@ def main():
     parser.add_argument("--verbose", action="store_true", help="详细输出")
     
     args = parser.parse_args()
-    
+
     # 设置日志级别
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
