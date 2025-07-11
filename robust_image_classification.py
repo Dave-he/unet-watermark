@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-简化版图像分类脚本
-使用预训练模型对data/train/watermarked文件夹下的图片进行分类
-如果DINOv2不可用，将使用ResNet作为备选方案
+鲁棒性图像分类脚本
+专门处理DINOv2加载失败的情况，提供多种备选方案
 """
 
 import os
@@ -19,10 +18,13 @@ import matplotlib.pyplot as plt
 import json
 from tqdm import tqdm
 from pathlib import Path
+import warnings
+warnings.filterwarnings('ignore')
 
 # 检查是否有GPU可用
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"使用设备: {device}")
+from generate_cluster_videos import gen_main
 
 class WatermarkDataset(Dataset):
     """水印图片数据集"""
@@ -58,12 +60,12 @@ class WatermarkDataset(Dataset):
                 default_img = Image.new('RGB', (224, 224), (0, 0, 0))
             return default_img, str(img_path.name)
 
-class ImageClassifier:
-    """图像分类器"""
+class RobustImageClassifier:
+    """鲁棒性图像分类器"""
     
-    def __init__(self, model_type='dinov2'):
-        self.model_type = model_type
+    def __init__(self):
         self.model = None
+        self.model_type = None
         self.features = []
         self.image_names = []
         
@@ -75,31 +77,86 @@ class ImageClassifier:
                                std=[0.229, 0.224, 0.225])
         ])
     
-    def load_model(self):
-        """加载模型"""
+    def try_load_dinov2(self):
+        """尝试加载DINOv2模型"""
         try:
-            if self.model_type == 'dinov2':
-                print("尝试加载DINOv2模型...")
-                self.model = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitb14')
-                print("DINOv2模型加载成功!")
-            else:
-                raise Exception("使用备选模型")
-                
-        except Exception as e:
-            print(f"DINOv2加载失败: {e}")
-            print("使用ResNet50作为备选模型...")
-            self.model_type = 'resnet'
+            print("正在尝试加载DINOv2模型...")
+            # 方法1: 从torch hub加载
+            self.model = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitb14', pretrained=True)
+            self.model_type = 'dinov2_hub'
+            print("✓ DINOv2模型 (torch hub) 加载成功!")
+            return True
+        except Exception as e1:
+            print(f"✗ torch hub加载失败: {e1}")
             
-            # 加载预训练的ResNet50
-            self.model = models.resnet50(pretrained=True)
-            # 移除最后的分类层，只保留特征提取部分
-            self.model = nn.Sequential(*list(self.model.children())[:-1])
-            print("ResNet50模型加载成功!")
+            try:
+                print("尝试使用transformers库加载DINOv2...")
+                from transformers import AutoModel, AutoImageProcessor
+                self.model = AutoModel.from_pretrained('facebook/dinov2-base')
+                self.processor = AutoImageProcessor.from_pretrained('facebook/dinov2-base')
+                self.model_type = 'dinov2_transformers'
+                print("✓ DINOv2模型 (transformers) 加载成功!")
+                return True
+            except Exception as e2:
+                print(f"✗ transformers加载失败: {e2}")
+                
+                try:
+                    print("尝试使用timm库加载DINOv2...")
+                    import timm
+                    self.model = timm.create_model('vit_base_patch14_dinov2.lvd142m', pretrained=True)
+                    self.model_type = 'dinov2_timm'
+                    print("✓ DINOv2模型 (timm) 加载成功!")
+                    return True
+                except Exception as e3:
+                    print(f"✗ timm加载失败: {e3}")
+                    return False
+    
+    def load_backup_model(self):
+        """加载备选模型"""
+        print("\n所有DINOv2加载方法都失败，使用备选模型...")
+        
+        # 尝试多个备选模型
+        backup_models = [
+            ('resnet50', lambda: models.resnet50(pretrained=True)),
+            ('resnet101', lambda: models.resnet101(pretrained=True)),
+            ('efficientnet_b0', lambda: models.efficientnet_b0(pretrained=True)),
+            ('vit_b_16', lambda: models.vit_b_16(pretrained=True))
+        ]
+        
+        for model_name, model_loader in backup_models:
+            try:
+                print(f"尝试加载 {model_name}...")
+                self.model = model_loader()
+                
+                # 移除分类层，只保留特征提取
+                if 'resnet' in model_name:
+                    self.model = nn.Sequential(*list(self.model.children())[:-1])
+                elif 'efficientnet' in model_name:
+                    self.model = nn.Sequential(*list(self.model.children())[:-1])
+                elif 'vit' in model_name:
+                    # ViT模型需要特殊处理
+                    pass
+                
+                self.model_type = model_name
+                print(f"✓ {model_name} 模型加载成功!")
+                return True
+            except Exception as e:
+                print(f"✗ {model_name} 加载失败: {e}")
+        
+        raise Exception("所有模型加载都失败了!")
+    
+    def load_model(self):
+        """加载模型（优先DINOv2，失败则使用备选）"""
+        # 首先尝试DINOv2
+        if not self.try_load_dinov2():
+            # DINOv2失败，使用备选模型
+            self.load_backup_model()
         
         self.model.to(device)
         self.model.eval()
+        print(f"\n最终使用模型: {self.model_type}")
     
-    def extract_features(self, image_dir, batch_size=32):
+    def extract_features(self, image_dir, batch_size=16):
         """提取图片特征"""
         if self.model is None:
             self.load_model()
@@ -108,7 +165,7 @@ class ImageClassifier:
         dataset = WatermarkDataset(image_dir, transform=self.transform)
         dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=2)
         
-        print(f"开始使用{self.model_type}模型提取特征...")
+        print(f"\n开始使用{self.model_type}模型提取特征...")
         self.features = []
         self.image_names = []
         
@@ -116,18 +173,34 @@ class ImageClassifier:
             for batch_images, batch_names in tqdm(dataloader, desc="提取特征"):
                 batch_images = batch_images.to(device)
                 
-                # 提取特征
-                if self.model_type == 'dinov2':
-                    batch_features = self.model(batch_images)
-                else:  # resnet
-                    batch_features = self.model(batch_images)
-                    batch_features = batch_features.view(batch_features.size(0), -1)  # 展平
-                
-                # 转换为numpy数组
-                batch_features = batch_features.cpu().numpy()
-                
-                self.features.extend(batch_features)
-                self.image_names.extend(batch_names)
+                try:
+                    # 根据模型类型提取特征
+                    if 'dinov2' in self.model_type:
+                        if self.model_type == 'dinov2_transformers':
+                            outputs = self.model(batch_images)
+                            batch_features = outputs.last_hidden_state[:, 0]  # CLS token
+                        else:
+                            batch_features = self.model(batch_images)
+                    elif 'vit' in self.model_type and 'dinov2' not in self.model_type:
+                        # 标准ViT模型
+                        batch_features = self.model(batch_images)
+                        if len(batch_features.shape) > 2:
+                            batch_features = batch_features.mean(dim=1)  # 全局平均池化
+                    else:
+                        # ResNet, EfficientNet等
+                        batch_features = self.model(batch_images)
+                        batch_features = batch_features.view(batch_features.size(0), -1)  # 展平
+                    
+                    # 转换为numpy数组
+                    batch_features = batch_features.cpu().numpy()
+                    
+                    self.features.extend(batch_features)
+                    self.image_names.extend(batch_names)
+                    
+                except Exception as e:
+                    print(f"处理批次时出错: {e}")
+                    # 跳过这个批次
+                    continue
         
         self.features = np.array(self.features)
         print(f"特征提取完成! 特征维度: {self.features.shape}")
@@ -161,11 +234,12 @@ class ImageClassifier:
         
         print("\n基于文件名的图片类型分析:")
         for img_type, count in type_counts.items():
-            print(f"{img_type}: {count} 张图片")
+            if count > 0:
+                print(f"{img_type}: {count} 张图片")
         
         return type_mapping, type_counts
     
-    def cluster_images(self, n_clusters=5, use_pca=True, pca_components=50):
+    def cluster_images(self, n_clusters=6, use_pca=True, pca_components=50):
         """对图片进行聚类分析"""
         if len(self.features) == 0:
             raise ValueError("请先提取特征!")
@@ -220,10 +294,11 @@ class ImageClassifier:
             
             print(f"\n聚类 {cluster_id} ({len(images)} 张图片):")
             for img_type, count in sorted(type_counts.items()):
-                percentage = (count / len(images)) * 100
-                print(f"  {img_type}: {count} 张 ({percentage:.1f}%)")
+                if count > 0:
+                    percentage = (count / len(images)) * 100
+                    print(f"  {img_type}: {count} 张 ({percentage:.1f}%)")
     
-    def visualize_clusters(self, clusters, output_dir='classification_results'):
+    def visualize_clusters(self, clusters, output_dir='robust_classification_results'):
         """可视化聚类结果"""
         output_path = Path(output_dir)
         output_path.mkdir(exist_ok=True)
@@ -258,7 +333,7 @@ class ImageClassifier:
         
         print(f"可视化结果已保存到: {output_path / 'cluster_visualization.png'}")
     
-    def save_results(self, results, clusters, output_dir='classification_results'):
+    def save_results(self, results, clusters, output_dir='robust_classification_results'):
         """保存分类结果"""
         output_path = Path(output_dir)
         output_path.mkdir(exist_ok=True)
@@ -276,17 +351,24 @@ class ImageClassifier:
         type_mapping, type_counts = self.analyze_image_types()
         
         # 创建详细报告
-        report_lines = ["# 图像分类报告\n\n"]
-        report_lines.append(f"**模型类型**: {results['model_type']}\n")
+        report_lines = ["# 鲁棒性图像分类报告\n\n"]
+        report_lines.append(f"**使用模型**: {results['model_type']}\n")
         report_lines.append(f"**总图片数量**: {len(self.image_names)}\n")
         report_lines.append(f"**特征维度**: {results['feature_dim']}\n")
         report_lines.append(f"**聚类数量**: {len(clusters)}\n\n")
         
+        # 添加模型加载信息
+        if 'dinov2' in self.model_type:
+            report_lines.append("**模型状态**: ✓ DINOv2模型加载成功\n\n")
+        else:
+            report_lines.append("**模型状态**: ⚠️ DINOv2加载失败，使用备选模型\n\n")
+        
         # 添加图片类型统计
         report_lines.append("## 图片类型统计\n\n")
         for img_type, count in type_counts.items():
-            percentage = (count / len(self.image_names)) * 100
-            report_lines.append(f"- **{img_type}**: {count} 张 ({percentage:.1f}%)\n")
+            if count > 0:
+                percentage = (count / len(self.image_names)) * 100
+                report_lines.append(f"- **{img_type}**: {count} 张 ({percentage:.1f}%)\n")
         
         report_lines.append("\n## 聚类详情\n\n")
         
@@ -304,8 +386,9 @@ class ImageClassifier:
             report_lines.append(f"**图片数量**: {len(images)}\n\n")
             report_lines.append("**类型组成**:\n")
             for img_type, count in sorted(cluster_type_counts.items()):
-                percentage = (count / len(images)) * 100
-                report_lines.append(f"- {img_type}: {count} 张 ({percentage:.1f}%)\n")
+                if count > 0:
+                    percentage = (count / len(images)) * 100
+                    report_lines.append(f"- {img_type}: {count} 张 ({percentage:.1f}%)\n")
             
             # 将图片名称写入文件
             with open(cluster_dir / 'image_list.txt', 'w', encoding='utf-8') as f:
@@ -329,10 +412,10 @@ def main():
     # 配置参数
     image_dir = 'data/train/watermarked'
     n_clusters = 6  # 根据观察到的图片类型调整
-    batch_size = 16  # 根据GPU内存调整
+    batch_size = 8   # 保守的批处理大小
     output_dir = 'data/classfy'
     
-    print("=== 图像分类开始 ===")
+    print("=== 鲁棒性图像分类开始 ===")
     print(f"图片目录: {image_dir}")
     print(f"聚类数量: {n_clusters}")
     print(f"批处理大小: {batch_size}")
@@ -344,11 +427,15 @@ def main():
         return
     
     try:
-        # 创建分类器（优先尝试DINOv2）
-        classifier = ImageClassifier(model_type='dinov2')
+        # 创建鲁棒性分类器
+        classifier = RobustImageClassifier()
         
         # 提取特征
         classifier.extract_features(image_dir, batch_size=batch_size)
+        
+        if len(classifier.features) == 0:
+            print("错误: 没有成功提取到任何特征!")
+            return
         
         # 分析图片类型
         classifier.analyze_image_types()
@@ -367,6 +454,15 @@ def main():
         
         print("\n=== 分类完成! ===")
         
+        # 提供DINOv2故障排除建议
+        if 'dinov2' not in classifier.model_type:
+            print("\n=== DINOv2故障排除建议 ===")
+            print("1. 检查网络连接，确保可以访问GitHub和Hugging Face")
+            print("2. 尝试安装额外依赖: pip install timm transformers")
+            print("3. 如果在公司网络，可能需要配置代理")
+            print("4. 可以手动下载模型文件到本地")
+            print("5. 当前使用的备选模型也能提供良好的分类效果")
+        
     except Exception as e:
         print(f"分类过程中出现错误: {e}")
         import traceback
@@ -374,3 +470,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+    gen_main()
