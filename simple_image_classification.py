@@ -330,7 +330,7 @@ def main():
     image_dir = 'data/train/watermarked'
     n_clusters = 6  # 根据观察到的图片类型调整
     batch_size = 16  # 根据GPU内存调整
-    output_dir = 'image_classification_results'
+    output_dir = 'data/classfy'
     
     print("=== 图像分类开始 ===")
     print(f"图片目录: {image_dir}")
