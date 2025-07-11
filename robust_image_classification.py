@@ -80,6 +80,7 @@ class RobustImageClassifier:
     def try_load_dinov2(self):
         """尝试加载DINOv2模型"""
         try:
+            raise ValueError("参数无效")
             print("正在尝试加载DINOv2模型...")
             # 方法1: 从torch hub加载
             self.model = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitb14', pretrained=True)
