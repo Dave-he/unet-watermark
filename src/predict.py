@@ -1038,7 +1038,8 @@ class WatermarkPredictor:
          
          for file_info in progress_bar:
              try:
-                 image_path = file_info['image_path']
+                 # 使用original_path而不是image_path，因为step1_results中包含的是original_path
+                 image_path = file_info.get('image_path', file_info['original_path'])
                  watermark_mask_path = file_info['mask_path']
                  
                  base_name = os.path.splitext(os.path.basename(image_path))[0]
@@ -1095,7 +1096,9 @@ class WatermarkPredictor:
                  progress_bar.set_postfix({'已处理': len(merged_files)})
                  
              except Exception as e:
-                 logger.error(f"合并mask失败: {file_info['image_path']} - {str(e)}")
+                 # 使用get方法安全获取路径信息
+                 error_path = file_info.get('image_path', file_info.get('original_path', 'unknown'))
+                 logger.error(f"合并mask失败: {error_path} - {str(e)}")
                  continue
          
          logger.info(f"mask合并完成: 成功处理 {len(merged_files)} 张图片")
