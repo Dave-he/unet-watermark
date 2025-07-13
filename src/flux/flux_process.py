@@ -17,10 +17,12 @@ import logging
 from pathlib import Path
 from tqdm import tqdm
 from typing import List, Optional
+import cv2
 
 # 添加项目根目录到路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from scripts.video_generator import VideoGenerator
+from ocr.easy_ocr import EasyOCRDetector
 
 # 设置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -28,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 # 全局模型变量
 model = None
+ocr_detector = None
 
 # ===== 1. 简化模型加载 =====
 def init_model(model_path: Optional[str] = None):
@@ -59,6 +62,21 @@ def init_model(model_path: Optional[str] = None):
     except Exception as e:
         logger.error(f"模型加载失败: {str(e)}")
         raise e
+
+def init_ocr_detector():
+    """初始化OCR检测器"""
+    global ocr_detector
+    
+    if ocr_detector is None:
+        logger.info("正在初始化EasyOCR检测器...")
+        try:
+            ocr_detector = EasyOCRDetector(languages=['en', 'ch_sim'], gpu=torch.cuda.is_available(), verbose=False)
+            logger.info("OCR检测器初始化完成")
+        except Exception as e:
+            logger.error(f"OCR检测器初始化失败: {str(e)}")
+            ocr_detector = None
+    
+    return ocr_detector
 
 # ===== 2. 核心推理函数 =====
 def remove_watermark(image: Image.Image, prompt: str = "Remove watermark") -> Image.Image:
@@ -106,6 +124,126 @@ def edit_image(image: Image.Image, prompt: str) -> Image.Image:
     except Exception as e:
         logger.error(f"图像编辑失败: {str(e)}")
         raise e
+
+def detect_and_remove_text(image: Image.Image, text_removal_method: str = "flux") -> Image.Image:
+    """检测并移除图像中的文字区域
+    
+    Args:
+        image: 输入图像
+        text_removal_method: 文字移除方法 ("flux", "iopaint", "lama")
+    """
+    global model, ocr_detector
+    
+    if ocr_detector is None:
+        init_ocr_detector()
+    
+    if ocr_detector is None:
+        logger.warning("OCR检测器未初始化，跳过文字检测")
+        return image
+    
+    try:
+        # 使用OCR检测文字区域
+        text_mask = ocr_detector.generate_text_mask(image)
+        
+        # 检查是否检测到文字
+        if text_mask is None or np.sum(text_mask) == 0:
+            logger.debug("未检测到文字区域")
+            return image
+        
+        # 计算文字区域占比
+        text_ratio = np.sum(text_mask > 0) / (text_mask.shape[0] * text_mask.shape[1])
+        logger.debug(f"检测到文字区域占比: {text_ratio:.3f}")
+        
+        # 如果文字区域占比太小，跳过处理
+        if text_ratio < 0.001 or text_ratio > 0.5:  # 0.1%
+            logger.debug("文字区域太小或者太大，跳过处理")
+            return image
+        
+        # 根据选择的方法处理文字区域
+        if text_removal_method.lower() == "flux":
+            # 使用FLUX模型移除文字
+            if model is None:
+                raise ValueError("FLUX模型未初始化，请先调用 init_model()")
+            
+            logger.debug("正在使用FLUX模型移除检测到的文字区域...")
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            
+            processed_image = model(
+                image=image,
+                prompt="Remove all text, characters, letters, numbers, and symbols from the image. Keep all other details intact.",
+                guidance_scale=3.0,
+                num_inference_steps=25,
+                generator=torch.Generator(device=device).manual_seed(42)
+            ).images[0]
+            
+            logger.debug("FLUX文字移除完成")
+            return processed_image
+            
+        elif text_removal_method.lower() in ["mat", "lama"]:
+            # 使用IOPaint+LAMA模型移除文字
+            logger.debug(f"正在使用{text_removal_method.upper()}模型移除检测到的文字区域...")
+            
+            # 导入IOPaint相关模块
+            try:
+                from iopaint.batch_processing import batch_inpaint
+                import tempfile
+                import shutil
+                from pathlib import Path
+            except ImportError as e:
+                logger.error(f"无法导入IOPaint模块: {str(e)}，回退到FLUX模型")
+                return detect_and_remove_text(image, "flux")
+            
+            # 创建临时目录
+            temp_dir = tempfile.mkdtemp(prefix='flux_text_removal_')
+            try:
+                # 保存输入图像
+                temp_image_path = os.path.join(temp_dir, "input.png")
+                image.save(temp_image_path)
+                
+                # 保存文字mask
+                temp_mask_path = os.path.join(temp_dir, "mask.png")
+                # 将numpy数组转换为PIL图像
+                mask_image = Image.fromarray((text_mask * 255).astype(np.uint8))
+                mask_image.save(temp_mask_path)
+                
+                # 创建输出目录
+                temp_output_dir = os.path.join(temp_dir, "output")
+                os.makedirs(temp_output_dir, exist_ok=True)
+                
+                # 使用IOPaint处理
+                model_name = "lama" if text_removal_method.lower() == "lama" else "mat"
+                batch_inpaint(
+                    model=model_name,
+                    device="cuda" if torch.cuda.is_available() else "cpu",
+                    image=Path(temp_dir),
+                    mask=Path(temp_dir),
+                    output=Path(temp_output_dir)
+                )
+                
+                # 读取处理结果
+                output_image_path = os.path.join(temp_output_dir, "input.png")
+                if os.path.exists(output_image_path):
+                    processed_image = Image.open(output_image_path).convert('RGB')
+                    logger.debug(f"{text_removal_method.upper()}文字移除完成")
+                    return processed_image
+                else:
+                    logger.warning(f"{text_removal_method.upper()}处理失败，未生成输出文件，返回原图")
+                    return image
+                    
+            finally:
+                # 清理临时目录
+                try:
+                    shutil.rmtree(temp_dir)
+                except Exception as e:
+                    logger.warning(f"清理临时目录失败: {str(e)}")
+        
+        else:
+            logger.warning(f"不支持的文字移除方法: {text_removal_method}，使用FLUX模型")
+            return detect_and_remove_text(image, "flux")
+        
+    except Exception as e:
+        logger.error(f"文字检测和移除失败: {str(e)}")
+        return image
 
 # ===== 3. 简化图像尺寸处理 =====
 def resize_image_for_flux(image: Image.Image) -> Image.Image:
@@ -185,7 +323,8 @@ def get_image_files(input_dir: str, output_dir: str = None, limit: Optional[int]
 
 def process_batch(input_dir: str, output_dir: str, prompt: str = "Remove watermark", 
                  limit: Optional[int] = None, random_select: bool = False, 
-                 task_type: str = "watermark", model_path: Optional[str] = None) -> List[tuple]:
+                 task_type: str = "watermark", model_path: Optional[str] = None,
+                 enable_text_detection: bool = True, text_removal_method: str = "flux") -> List[tuple]:
     """批量处理图像"""
     # 创建输出目录
     os.makedirs(output_dir, exist_ok=True)
@@ -222,6 +361,10 @@ def process_batch(input_dir: str, output_dir: str, prompt: str = "Remove waterma
                 processed_image = remove_watermark(image, prompt)
             else:
                 processed_image = edit_image(image, prompt)
+            
+            # 检测并移除文字区域（如果启用）
+            if enable_text_detection:
+                processed_image = detect_and_remove_text(processed_image, text_removal_method)
             
             # 保存处理后的图像
             output_filename = f"{Path(image_path).stem}{Path(image_path).suffix}"
@@ -293,6 +436,10 @@ def main():
     parser.add_argument("--random", "-r", action="store_true", help="随机选择图像")
     parser.add_argument("--task", "-t", choices=["watermark", "edit"], default="watermark", 
                        help="任务类型: watermark(去水印) 或 edit(通用编辑)")
+    parser.add_argument("--enable-text-detection", action="store_true", default=True, 
+                       help="启用文字检测和移除功能")
+    parser.add_argument("--text-removal-method", choices=["flux", "iopaint", "lama"], default="lama",
+                       help="文字移除方法: flux(FLUX模型), iopaint(IOPaint), lama(LAMA模型)")
     
     # 视频生成选项
     parser.add_argument("--video", "-v", action="store_true", help="生成对比视频")
@@ -322,10 +469,17 @@ def main():
     if args.video and not args.video_output:
         args.video_output = os.path.join(args.output, "videos")
     
+    # 处理文字检测参数
+    enable_text_detection = args.enable_text_detection
+    text_removal_method = args.text_removal_method
+    
     try:
         # 批量处理图像
         logger.info(f"开始批量处理: {args.input} -> {args.output}")
         logger.info(f"任务类型: {args.task}, 提示词: {args.prompt}")
+        logger.info(f"文字检测功能: {'启用' if enable_text_detection else '禁用'}")
+        if enable_text_detection:
+            logger.info(f"文字移除方法: {text_removal_method.upper()}")
         
         processed_pairs = process_batch(
             input_dir=args.input,
@@ -334,7 +488,9 @@ def main():
             limit=args.limit,
             random_select=args.random,
             task_type=args.task,
-            model_path=args.model_path
+            model_path=args.model_path,
+            enable_text_detection=enable_text_detection,
+            text_removal_method=text_removal_method
         )
         
         if not processed_pairs:
