@@ -428,7 +428,7 @@ def main():
     # 基本参数
     parser.add_argument("--input", "-i", default='data/test', help="输入图像目录")
     parser.add_argument("--output", "-o", default='data/res', help="输出图像目录")
-    parser.add_argument("--prompt", "-p", default="Remove watermarks, logos, and labels from the image. Be careful not to modify the details of the parts themselves, and do not lose small parts. If there are small labels on the parts themselves, erase them and keep their screen printing. If there is a car in the image, please cover the car logo.", help="处理提示词")
+    parser.add_argument("--prompt", "-p", default="Remove watermarks, logos, and labels from the image. Be careful not to modify the details of the parts themselves, and do not lose small parts. If there are small labels on the parts themselves, erase them and keep their screen printing. If there is a car in the image, please cover the vehicle emblem.", help="处理提示词")
     parser.add_argument("--model-path", "-m", help="本地FLUX模型目录路径 (可选，不指定则使用在线模型)")
     
     # 处理选项
