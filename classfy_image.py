@@ -730,8 +730,8 @@ def main():
                        help='聚类数量 (默认: 6)')
     parser.add_argument('--batch_size', '-b', type=int, default=8,
                        help='批处理大小 (默认: 8)')
-    parser.add_argument('--output_dir', '-o', type=str, default='stable_classification',
-                       help='分析结果输出目录 (默认: stable_classification)')
+    parser.add_argument('--output_dir', '-o', type=str, default='data/stable_classification',
+                       help='分析结果输出目录')
     parser.add_argument('--no_cache', action='store_true',
                        help='禁用特征缓存')
     
