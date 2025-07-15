@@ -370,7 +370,7 @@ def main():
     # 训练命令
     train_parser = subparsers.add_parser('train', help='训练模型')
     train_parser.add_argument('--config', type=str, help='配置文件路径',
-                             default="src/configs/unet_watermark_large.yaml")
+                             default="src/configs/unet_watermark.yaml")
     train_parser.add_argument('--device', type=str, 
                              default='auto', help='计算设备 (默认: auto)')
     train_parser.add_argument('--data-dir', type=str, help='数据集根目录')
@@ -404,7 +404,7 @@ def main():
     repair_parser.add_argument('--model', type=str, default='models/unet_watermark.pth',
                               help='模型文件路径')
     repair_parser.add_argument('--config', type=str, help='配置文件路径',
-                              default="src/configs/unet_watermark_large.yaml")
+                              default="src/configs/unet_watermark.yaml")
     repair_parser.add_argument('--device', type=str, 
                               default='auto', help='计算设备 (默认: auto)')
     repair_parser.add_argument('--watermark-model', type=str, default='lama',
