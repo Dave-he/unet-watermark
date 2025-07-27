@@ -8,7 +8,7 @@ FLUX Kontext 批量图像处理脚本
 import torch
 import numpy as np
 from PIL import Image
-from diffusers import FluxKontextPipeline
+
 import argparse
 import os
 import sys
@@ -17,6 +17,12 @@ import logging
 from pathlib import Path
 from tqdm import tqdm
 from typing import List, Optional
+
+from diffusers import FluxKontextPipeline
+from diffusers.utils import load_image
+from nunchaku import NunchakuFluxTransformer2dModel
+from nunchaku.utils import get_precision
+
 
 # 添加项目根目录到路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -30,72 +36,17 @@ logger = logging.getLogger(__name__)
 model = None
 
 # ===== 1. 环境初始化与模型加载 =====
-def init_model(model_path: Optional[str] = None):
-    """加载4位量化版 Flux-Kontext 模型，启用 Nunchaku 加速"""
+def init_model():
+    transformer = NunchakuFluxTransformer2dModel.from_pretrained(
+        f"nunchaku-tech/nunchaku-flux.1-kontext-dev/svdq-{get_precision()}_r32-flux.1-kontext-dev.safetensors"
+    )
     global model
-    
-    logger.info("正在加载 FLUX Kontext 模型...")
-    
-    # 确定模型路径
-    if model_path and os.path.exists(model_path):
-        logger.info(f"使用本地模型: {model_path}")
-        model_name_or_path = model_path
-    else:
-        logger.info("使用在线模型: mit-han-lab/nunchaku-flux.1-kontext-dev")
-        model_name_or_path = "mit-han-lab/nunchaku-flux.1-kontext-dev"
-    
-    try:
-        pipeline = FluxKontextPipeline.from_pretrained(
-            model_name_or_path,                          # 支持本地路径或在线模型
-            torch_dtype=torch.bfloat16,                  # 推荐使用bfloat16
-            variant="int4_r32" if not model_path else None,  # 本地模型可能不需要variant
-            device_map="balanced"                         # 使用 balanced 策略
-        )
-        
-        # 启用硬件加速优化
-        if hasattr(pipeline, 'enable_nunchaku_optimizations'):
-            pipeline.enable_nunchaku_optimizations(
-                attention_mode="nunchaku-fp16",    # A10适配模式
-                use_cpu_offload=True,               # 显存<18GB时启用CPU卸载
-                cache_threshold=0.12                # 首层特征缓存平衡点
-            )
-        
-        model = pipeline
-        logger.info("模型加载完成")
-        return pipeline
-        
-    except Exception as e:
-        logger.error(f"模型加载失败: {str(e)}")
-        # 尝试加载标准版本
-        logger.info("尝试加载标准版本...")
-        try:
-            # 如果有本地路径，优先使用本地路径，否则使用在线模型
-            fallback_model = model_name_or_path if model_path else "black-forest-labs/FLUX.1-Kontext-dev"
-            pipeline = FluxKontextPipeline.from_pretrained(
-                fallback_model,
-                torch_dtype=torch.bfloat16,
-                device_map="balanced"  # 使用 balanced 策略
-            )
-            model = pipeline
-            logger.info("标准版本模型加载完成")
-            return pipeline
-        except Exception as e2:
-            logger.error(f"标准版本加载也失败: {str(e2)}")
-            # 最后尝试不使用 device_map
-            logger.info("尝试不使用 device_map...")
-            try:
-                fallback_model = model_name_or_path if model_path else "black-forest-labs/FLUX.1-Kontext-dev"
-                pipeline = FluxKontextPipeline.from_pretrained(
-                    fallback_model,
-                    torch_dtype=torch.bfloat16
-                )
-                pipeline.to("cpu")
-                model = pipeline
-                logger.info("简化版本模型加载完成")
-                return pipeline
-            except Exception as e3:
-                logger.error(f"所有模型加载方式都失败: {str(e3)}")
-                raise e3
+    pipeline = FluxKontextPipeline.from_pretrained(
+        "black-forest-labs/FLUX.1-Kontext-dev", transformer=transformer, torch_dtype=torch.bfloat16
+    ).to("cuda")
+    model = pipeline
+    return pipeline
+
 
 # ===== 2. 核心推理函数 =====
 def remove_watermark(image: Image.Image, prompt: str = "Remove watermark") -> Image.Image:
@@ -184,7 +135,7 @@ def get_image_files(input_dir: str, output_dir: str = None, limit: Optional[int]
 
 def process_batch(input_dir: str, output_dir: str, prompt: str = "Remove watermark", 
                  limit: Optional[int] = None, random_select: bool = False, 
-                 task_type: str = "watermark", model_path: Optional[str] = None) -> List[tuple]:
+                 task_type: str = "watermark") -> List[tuple]:
     """批量处理图像"""
     # 创建输出目录
     os.makedirs(output_dir, exist_ok=True)
@@ -198,7 +149,7 @@ def process_batch(input_dir: str, output_dir: str, prompt: str = "Remove waterma
     
     # 初始化模型
     if model is None:
-        init_model(model_path)
+        init_model()
     
     processed_pairs = []
     failed_count = 0
@@ -384,8 +335,7 @@ def main():
             prompt=args.prompt,
             limit=args.limit,
             random_select=args.random,
-            task_type=args.task,
-            model_path=args.model_path
+            task_type=args.task
         )
         
         if not processed_pairs:
