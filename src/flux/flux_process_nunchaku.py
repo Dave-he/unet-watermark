@@ -287,7 +287,7 @@ def main():
     # 基本参数
     parser.add_argument("--input", "-i", default='data/test', help="输入图像目录")
     parser.add_argument("--output", "-o", default='data/res', help="输出图像目录")
-    parser.add_argument("--prompt", "-p", default="Remove the watermark、logo、Nameplate、label、car logo from the image", help="处理提示词")
+    parser.add_argument("--prompt", "-p", default="Remove watermarks, logos, nameplates, labels, and car logos from the image. If the image is stitched, process the parts within the stitching separately. Also, do not lose any small parts", help="处理提示词")
     parser.add_argument("--model-path", "-m", help="本地FLUX模型目录路径 (可选，不指定则使用在线模型)")
     
     # 处理选项
@@ -297,7 +297,7 @@ def main():
                        help="任务类型: watermark(去水印) 或 edit(通用编辑)")
     
     # 视频生成选项
-    parser.add_argument("--video", "-v", action="store_true", help="生成对比视频")
+    parser.add_argument("--video", "-v", default=True, action="store_true", help="生成对比视频")
     parser.add_argument("--video-output", help="视频输出目录 (默认为输出目录下的videos子目录)")
     parser.add_argument("--video-type", choices=["sidebyside", "sequence"], default="sidebyside",
                        help="视频类型: sidebyside(并排对比) 或 sequence(序列对比)")
