@@ -308,7 +308,7 @@ def main():
     
     # 其他选项
     parser.add_argument("--verbose", action="store_true", help="详细输出")
-    
+        
     args = parser.parse_args()
     
     # 设置日志级别
